@@ -9,12 +9,25 @@ pub struct HookEnv {
     pub worktree_name: Option<String>,
 }
 
+/// Which user the hook should run as inside the container.
+#[derive(Debug, Clone, Copy)]
+pub enum HookUser {
+    /// Container default (the unprivileged `claude` user). Use for hooks
+    /// that should run with the same identity as the agent, e.g. worktree
+    /// setup that touches project files.
+    Default,
+    /// Container root (UID 0). Use for setup / on_start / on_stop hooks
+    /// that legitimately need to apt-install, configure tailscaled, etc.
+    Root,
+}
+
 pub fn run(
     podman: &Podman,
     container: &str,
     commands: &[String],
     env: &HookEnv,
     abort_on_failure: bool,
+    user: HookUser,
 ) -> Result<()> {
     if commands.is_empty() {
         return Ok(());
@@ -31,6 +44,10 @@ pub fn run(
 
     let script = commands.join(" && ");
     let mut args: Vec<String> = vec!["exec".into()];
+    if let HookUser::Root = user {
+        args.push("--user".into());
+        args.push("0".into());
+    }
     for (k, v) in &env_pairs {
         args.push("--env".into());
         args.push(format!("{}={}", k, v));

@@ -16,6 +16,11 @@ pub enum Volume {
     Named { name: String, container: PathBuf, ro: bool },
 }
 
+/// The non-root user inside the container that Claude runs as.
+/// Must match the user created in the image's Dockerfile.
+pub const CONTAINER_USER: &str = "claude";
+pub const CONTAINER_HOME: &str = "/home/claude";
+
 pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume> {
     let home = paths::home();
     let mut v = vec![
@@ -26,12 +31,12 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
         }),
         Volume::Bind(Mount {
             host: home.join(".claude"),
-            container: PathBuf::from("/root/.claude"),
+            container: PathBuf::from(format!("{CONTAINER_HOME}/.claude")),
             ro: false,
         }),
         Volume::Named {
             name: format!("cs-{}-home", container_name),
-            container: PathBuf::from("/root"),
+            container: PathBuf::from(CONTAINER_HOME),
             ro: false,
         },
     ];
@@ -39,7 +44,7 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
     if gitconfig.exists() {
         v.push(Volume::Bind(Mount {
             host: gitconfig,
-            container: PathBuf::from("/root/.gitconfig"),
+            container: PathBuf::from(format!("{CONTAINER_HOME}/.gitconfig")),
             ro: true,
         }));
     }

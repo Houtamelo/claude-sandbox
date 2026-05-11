@@ -21,6 +21,7 @@ pub fn stop(podman: &Podman, name: &str, on_stop: &[String], project: &std::path
                 worktree_name: None,
             },
             false,
+            crate::hooks::HookUser::Root,
         )?;
     }
     podman.run(&stop_args(name))?;

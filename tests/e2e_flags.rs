@@ -31,6 +31,39 @@ fn main_path_claude_argv_includes_skip_permissions() {
     );
 }
 
+/// End-to-end: claude actually accepts --dangerously-skip-permissions as
+/// the non-root `claude` user (it refuses to honour the flag as root, so
+/// the user setup in the Dockerfile is load-bearing for the sandbox model
+/// to work at all). Uses --print to keep it non-interactive.
+#[test]
+fn claude_accepts_dangerously_skip_as_nonroot() {
+    if should_skip("claude_accepts_dangerously_skip_as_nonroot") {
+        return;
+    }
+    let sb = Sandbox::new();
+    create_via_lib(&sb);
+    let _ = common::podman(&["start", &sb.name]);
+
+    let out = sb.podman_exec(&[
+        "claude",
+        "--dangerously-skip-permissions",
+        "--print",
+        "respond with the word OK",
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // The exit might be non-zero if no auth is configured in the
+    // tester's ~/.claude. We only fail on the specific "root/sudo"
+    // refusal message — that's the regression we're guarding.
+    assert!(
+        !stdout.contains("cannot be used with root/sudo")
+            && !stderr.contains("cannot be used with root/sudo"),
+        "claude refused --dangerously-skip-permissions; the in-image \
+         default user must be non-root.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
 /// Verify the binary's source spec — the CLAUDE_FLAGS constant must
 /// contain the flag. Lightweight string-level check on main.rs so
 /// removing the flag without updating tests is caught.
@@ -51,7 +84,7 @@ fn main_rs_declares_dangerously_skip_permissions() {
 
 fn create_via_lib(sb: &Sandbox) {
     use claude_sandbox::config::{edit, load_merged};
-    use claude_sandbox::container::create::{ensure_container, CreateOptions};
+    use claude_sandbox::container::create::{ensure_container, grant_acls, CreateOptions};
     use claude_sandbox::podman::runner::Podman;
 
     let toml = sb.path().join(".claude-sandbox.toml");
@@ -70,4 +103,6 @@ fn create_via_lib(sb: &Sandbox) {
         },
     )
     .expect("ensure_container");
+    let _ = common::podman(&["start", &sb.name]);
+    grant_acls(&podman, &sb.name).expect("grant_acls");
 }

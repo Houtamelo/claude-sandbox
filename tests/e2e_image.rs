@@ -61,8 +61,8 @@ fn claude_is_on_path_inside_image() {
     assert!(
         !stdout.contains("MISSING"),
         "claude binary is not on PATH inside the image. \
-         The Anthropic installer placed it at /root/.local/bin/ but PATH \
-         doesn't include that.\nstdout: {}",
+         The Anthropic installer placed it at /home/claude/.local/bin/ \
+         but PATH doesn't include that.\nstdout: {}",
         stdout
     );
 }
@@ -73,8 +73,8 @@ fn default_entrypoint_accepts_appended_commands() {
     // `podman run image cmd args` becomes `bash -l cmd args` and bash
     // treats `cmd` as a script filename — "cannot execute binary file".
     //
-    // We expect a working image to let us `podman run image whoami`
-    // and get `root` back.
+    // Image default user is `claude` (non-root) — required for
+    // --dangerously-skip-permissions to actually work.
     if should_skip("default_entrypoint_accepts_appended_commands") {
         return;
     }
@@ -85,23 +85,40 @@ fn default_entrypoint_accepts_appended_commands() {
         out.status.success(),
         "appended `whoami` command failed via default entrypoint.\nstdout: {stdout}\nstderr: {stderr}",
     );
-    assert_eq!(stdout.trim(), "root");
+    assert_eq!(stdout.trim(), "claude");
 }
 
 #[test]
 fn home_local_bin_in_path() {
-    // Either claude lives somewhere global, or /root/.local/bin is in PATH.
-    // We verify by echoing PATH and asserting /root/.local/bin appears
-    // (which is the canonical fix for `claude_is_on_path_inside_image`).
+    // Either claude lives somewhere global, or /home/claude/.local/bin is in PATH.
+    // We verify by echoing PATH and asserting it appears (which is the
+    // canonical fix for `claude_is_on_path_inside_image`).
     if should_skip("home_local_bin_in_path") {
         return;
     }
     let out = run_in_image(&["echo \"$PATH\""]);
     let path = String::from_utf8_lossy(&out.stdout);
     assert!(
-        path.contains("/root/.local/bin"),
-        "/root/.local/bin not in image PATH (would break `claude` lookup). \
+        path.contains("/home/claude/.local/bin"),
+        "/home/claude/.local/bin not in image PATH (would break `claude` lookup). \
          got PATH: {}",
         path.trim()
+    );
+}
+
+#[test]
+fn claude_user_has_passwordless_sudo() {
+    // The image's `claude` user must have NOPASSWD sudo so apt installs,
+    // tailscaled setup, and other root-needing operations stay frictionless
+    // inside the sandbox.
+    if should_skip("claude_user_has_passwordless_sudo") {
+        return;
+    }
+    let out = run_in_image(&["sudo -n whoami 2>&1"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.trim() == "root",
+        "claude user lacks passwordless sudo (sandbox can't apt-install). \
+         output: {stdout}"
     );
 }

@@ -92,9 +92,26 @@ pub fn rm_args(name: &str) -> Vec<String> {
 }
 
 pub fn exec_args(name: &str, interactive: bool, cmd: &[&str]) -> Vec<String> {
+    exec_args_as(name, None, interactive, cmd)
+}
+
+/// `podman exec` builder with an optional `--user <user>` override.
+/// Pass `Some("0")` to run as container root (needed for setup hooks,
+/// apt installs, tailscaled, etc.). `None` uses the image's default
+/// user (the `claude` user from the Dockerfile).
+pub fn exec_args_as(
+    name: &str,
+    user: Option<&str>,
+    interactive: bool,
+    cmd: &[&str],
+) -> Vec<String> {
     let mut v: Vec<String> = vec!["exec".into()];
     if interactive {
         v.push("-it".into());
+    }
+    if let Some(u) = user {
+        v.push("--user".into());
+        v.push(u.into());
     }
     v.push(name.into());
     v.extend(cmd.iter().map(|s| (*s).into()));

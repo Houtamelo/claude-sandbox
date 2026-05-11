@@ -96,7 +96,7 @@ fn cs_worktree_rm_removes_the_worktree() {
 
 fn create_and_start(sb: &Sandbox) {
     use claude_sandbox::config::{edit, load_merged};
-    use claude_sandbox::container::create::{ensure_container, CreateOptions};
+    use claude_sandbox::container::create::{ensure_container, grant_acls, CreateOptions};
     use claude_sandbox::podman::runner::Podman;
 
     let toml = sb.path().join(".claude-sandbox.toml");
@@ -122,6 +122,8 @@ fn create_and_start(sb: &Sandbox) {
         "start failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // Mirror start_or_shell: grant the non-root claude user access to /work.
+    grant_acls(&podman, &sb.name).expect("grant_acls");
 }
 
 fn init_git_with_commit(path: &std::path::Path) {

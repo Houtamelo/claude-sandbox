@@ -64,7 +64,7 @@ fn ls_finds_managed_containers_via_label() {
 
 fn create_via_lib(sb: &Sandbox) {
     use claude_sandbox::config::{edit, load_merged};
-    use claude_sandbox::container::create::{ensure_container, CreateOptions};
+    use claude_sandbox::container::create::{ensure_container, grant_acls, CreateOptions};
     use claude_sandbox::podman::runner::Podman;
 
     let toml = sb.path().join(".claude-sandbox.toml");
@@ -83,4 +83,6 @@ fn create_via_lib(sb: &Sandbox) {
         },
     )
     .expect("ensure_container");
+    let _ = common::podman(&["start", &sb.name]);
+    grant_acls(&podman, &sb.name).expect("grant_acls");
 }

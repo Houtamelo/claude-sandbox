@@ -12,8 +12,8 @@ use std::process::Command;
 use common::{should_skip, Sandbox};
 
 #[test]
-fn non_login_shell_preserves_root_local_bin_in_path() {
-    if should_skip("non_login_shell_preserves_root_local_bin_in_path") {
+fn non_login_shell_preserves_claude_local_bin_in_path() {
+    if should_skip("non_login_shell_preserves_claude_local_bin_in_path") {
         return;
     }
     let sb = Sandbox::new();
@@ -24,8 +24,8 @@ fn non_login_shell_preserves_root_local_bin_in_path() {
     let out = sb.podman_exec(&["bash", "-c", "echo $PATH"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("/root/.local/bin"),
-        "non-login bash dropped /root/.local/bin from PATH. \
+        stdout.contains("/home/claude/.local/bin"),
+        "non-login bash dropped /home/claude/.local/bin from PATH. \
          If this fails the worktree-launch path will say \
          `claude: command not found`. got PATH: {}",
         stdout.trim()
@@ -64,7 +64,7 @@ fn claude_is_findable_via_the_actual_worktree_wrapper_shape() {
         "wrapper failed.\nstdout: {stdout}\nstderr: {stderr}",
     );
     assert!(
-        stdout.contains("/root/.local/bin/claude") || stdout.trim().ends_with("/claude"),
+        stdout.contains("/home/claude/.local/bin/claude") || stdout.trim().ends_with("/claude"),
         "wrapper didn't find claude. stdout: {}",
         stdout.trim()
     );
@@ -74,7 +74,7 @@ fn claude_is_findable_via_the_actual_worktree_wrapper_shape() {
 
 fn create_via_lib(sb: &Sandbox) {
     use claude_sandbox::config::{edit, load_merged};
-    use claude_sandbox::container::create::{ensure_container, CreateOptions};
+    use claude_sandbox::container::create::{ensure_container, grant_acls, CreateOptions};
     use claude_sandbox::podman::runner::Podman;
 
     let toml = sb.path().join(".claude-sandbox.toml");
@@ -93,6 +93,9 @@ fn create_via_lib(sb: &Sandbox) {
         },
     )
     .expect("ensure_container");
+    // grant_acls needs a running container.
+    let _ = common::podman(&["start", &sb.name]);
+    grant_acls(&podman, &sb.name).expect("grant_acls");
 }
 
 fn init_git_with_commit(path: &std::path::Path) {

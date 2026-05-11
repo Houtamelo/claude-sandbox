@@ -78,7 +78,7 @@ fn setup_hook_does_not_rerun_on_subsequent_start() {
 
 fn create_with_setup(sb: &Sandbox) {
     use claude_sandbox::config::load_merged;
-    use claude_sandbox::container::create::{ensure_container, run_setup, CreateOptions};
+    use claude_sandbox::container::create::{ensure_container, grant_acls, run_setup, CreateOptions};
     use claude_sandbox::podman::runner::Podman;
 
     let toml = sb.path().join(".claude-sandbox.toml");
@@ -98,4 +98,6 @@ fn create_with_setup(sb: &Sandbox) {
     if just_created {
         run_setup(&podman, &sb.name, sb.path(), &cfg.setup).expect("setup");
     }
+    let _ = common::podman(&["start", &sb.name]);
+    grant_acls(&podman, &sb.name).expect("grant_acls");
 }

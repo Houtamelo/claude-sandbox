@@ -217,7 +217,7 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
 
     let image = cfg.image.clone().unwrap_or_else(|| DEFAULT_IMAGE.into());
 
-    use claude_sandbox::container::create::{ensure_container, run_setup, CreateOptions};
+    use claude_sandbox::container::create::{ensure_container, grant_acls, run_setup, CreateOptions};
     use claude_sandbox::hooks;
 
     let just_created = ensure_container(
@@ -235,6 +235,9 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
     }
 
     lifecycle::ensure_running(podman, &name)?;
+    // Idempotent: grant the non-root `claude` user write access to the
+    // bind-mounted dirs. Cheap and safe to repeat every start.
+    grant_acls(podman, &name)?;
 
     let mut on_start_combined: Vec<String> =
         claude_sandbox::features::tailscale::on_start_commands(&cfg.tailscale, &name);
@@ -250,6 +253,7 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
             worktree_name: None,
         },
         false,
+        hooks::HookUser::Root,
     )?;
 
     let mut argv: Vec<&str> = vec![inner];

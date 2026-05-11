@@ -66,13 +66,13 @@ fn container_has_default_mounts() {
     };
     assert!(has_target("/work"), "missing /work bind. mounts: {:#?}", mounts);
     assert!(
-        has_target("/root/.claude"),
-        "missing /root/.claude bind. mounts: {:#?}",
+        has_target("/home/claude/.claude"),
+        "missing /home/claude/.claude bind. mounts: {:#?}",
         mounts
     );
     assert!(
-        has_target("/root"),
-        "missing /root named volume. mounts: {:#?}",
+        has_target("/home/claude"),
+        "missing /home/claude named volume. mounts: {:#?}",
         mounts
     );
 }
@@ -90,9 +90,12 @@ fn workdir_is_work_and_user_is_root() {
     assert!(out.status.success(), "pwd failed");
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/work");
 
-    let out = sb.podman_exec(&["id", "-u"]);
+    // Image's default user is the non-root `claude` user (UID 1000).
+    // Container-root remains accessible via passwordless sudo for hooks
+    // and apt operations.
+    let out = sb.podman_exec(&["id", "-un"]);
     assert!(out.status.success(), "id failed");
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "claude");
 }
 
 #[test]
@@ -177,6 +180,16 @@ fn create_container(sb: &Sandbox) {
     )
     .expect("ensure_container");
     assert!(just_created, "first ensure_container should create");
+}
+
+/// After-start ACL grant: mirrors the production start_or_shell flow
+/// where grant_acls runs right after ensure_running.
+#[allow(dead_code)]
+fn grant_acls_post_start(sb: &Sandbox) {
+    use claude_sandbox::container::create::grant_acls;
+    use claude_sandbox::podman::runner::Podman;
+    let podman = Podman::discover().expect("podman");
+    grant_acls(&podman, &sb.name).expect("grant_acls");
 }
 
 /// `podman start` so subsequent `podman exec` calls work. Verifies the

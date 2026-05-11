@@ -27,6 +27,7 @@ pub fn run_setup(
     }
     // Container must be running for exec.
     podman.run(&crate::podman::args::start_args(name))?;
+    // setup hooks run as root: they typically apt-install, modify /etc, etc.
     crate::hooks::run(
         podman,
         name,
@@ -37,7 +38,27 @@ pub fn run_setup(
             worktree_name: None,
         },
         true,
+        crate::hooks::HookUser::Root,
     )?;
+    Ok(())
+}
+
+/// Grant the in-container `claude` user write access to the bind-mounted
+/// project dir and `~/.claude` so a non-root agent can edit existing
+/// host-owned files. ACLs are additive (no ownership change) and propagate
+/// to the host as entries for the userns sub-uid — harmless metadata.
+///
+/// Safe to call on every start. Best-effort: failures are logged but
+/// non-fatal so a stale image without `acl` installed doesn't lock the
+/// user out — they can `claude-sandbox rebuild` to fix.
+pub fn grant_acls(podman: &Podman, name: &str) -> Result<()> {
+    let cmd = format!(
+        "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx /work {home}/.claude 2>/dev/null || true",
+        user = crate::mounts::CONTAINER_USER,
+        home = crate::mounts::CONTAINER_HOME,
+    );
+    let args = crate::podman::args::exec_args_as(name, Some("0"), false, &["bash", "-c", &cmd]);
+    let _ = podman.run(&args);
     Ok(())
 }
 

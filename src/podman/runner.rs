@@ -16,7 +16,33 @@ impl Podman {
         Ok(Self { bin })
     }
 
-    pub fn run(&self, args: &[String]) -> Result<Output> {
+    /// Invoke `podman <args>` with stdout/stderr streaming straight to the
+    /// user's terminal. Returns success/failure only — the user has already
+    /// seen the output inline. Use this for lifecycle ops where progress
+    /// (image pull, apt-install in setup hooks, `podman create` echoing
+    /// the new container ID, etc.) is informative.
+    pub fn run(&self, args: &[String]) -> Result<()> {
+        debug1!("podman {}", args.join(" "));
+        let status = Command::new(&self.bin)
+            .args(args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        if !status.success() {
+            return Err(Error::Podman(format!(
+                "podman {} exited {} (see output above)",
+                args.first().map(|s| s.as_str()).unwrap_or(""),
+                status.code().unwrap_or(-1)
+            )));
+        }
+        Ok(())
+    }
+
+    /// Invoke `podman <args>` capturing stdout/stderr into the returned
+    /// [`Output`] (silent on the user's terminal). For introspection
+    /// commands like `inspect` / `ps --format json` where we need to
+    /// parse the output and the user doesn't benefit from seeing it.
+    pub fn run_capture(&self, args: &[String]) -> Result<Output> {
         debug1!("podman {}", args.join(" "));
         let output = Command::new(&self.bin)
             .args(args)
@@ -52,7 +78,7 @@ impl Podman {
     }
 
     pub fn run_json(&self, args: &[String]) -> Result<Value> {
-        let out = self.run(args)?;
+        let out = self.run_capture(args)?;
         let s = String::from_utf8_lossy(&out.stdout);
         serde_json::from_str::<Value>(s.trim())
             .map_err(|e| Error::Podman(format!("invalid json from podman: {e}")))

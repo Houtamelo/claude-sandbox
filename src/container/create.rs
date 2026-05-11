@@ -58,11 +58,12 @@ pub fn run_deps_script(podman: &Podman, name: &str, project: &Path) -> Result<()
     }
     // Container must be running for exec.
     podman.run(&crate::podman::args::start_args(name))?;
+    let script_in_container = script.display().to_string();
     let args = crate::podman::args::exec_args_as(
         name,
         Some("0"),
         false,
-        &["bash", "/work/.claude-sandbox.deps.sh"],
+        &["bash", &script_in_container],
     );
     podman.run(&args)?;
     Ok(())
@@ -76,17 +77,18 @@ pub fn run_deps_script(podman: &Podman, name: &str, project: &Path) -> Result<()
 /// Safe to call on every start. Best-effort: failures are logged but
 /// non-fatal so a stale image without `acl` installed doesn't lock the
 /// user out — they can `claude-sandbox rebuild` to fix.
-pub fn grant_acls(podman: &Podman, name: &str) -> Result<()> {
+pub fn grant_acls(podman: &Podman, name: &str, project: &Path) -> Result<()> {
     let home = crate::mounts::container_home();
     // Directories: recursive + default ACL so new entries inherit.
     // File: single non-recursive ACL.
     let cmd = format!(
         "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx \
-            /work {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null; \
+            {project} {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null; \
          setfacl -m u:{user}:rw {home}/.claude.json 2>/dev/null; \
          true",
         user = crate::mounts::CONTAINER_USER,
         home = home.display(),
+        project = project.display(),
     );
     let args = crate::podman::args::exec_args_as(name, Some("0"), false, &["bash", "-c", &cmd]);
     let _ = podman.run(&args);
@@ -108,6 +110,12 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     }
 
     let mut env_pairs = env::resolve(opts.config, opts.project_path);
+    // Expose the project path inside so `cs` and other tools can locate
+    // the project root without relying on a hardcoded /work.
+    env_pairs.push((
+        "CS_PROJECT_PATH".into(),
+        opts.project_path.display().to_string(),
+    ));
     for k in crate::features::tailscale::passthrough_env(&opts.config.tailscale) {
         if let Ok(v) = std::env::var(&k) {
             env_pairs.push((k, v));
@@ -128,7 +136,9 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     let ports = crate::network::resolve(&port_requests)?;
 
     let network = opts.config.network.as_deref().unwrap_or("bridge");
-    let workdir = std::path::PathBuf::from("/work");
+    // Workdir is the project's host path (same as the bind-mount target),
+    // so claude's session-CWD matches between in- and out-of-container.
+    let workdir = opts.project_path.to_path_buf();
     let gpu_extras = crate::features::gpu::extra_args(opts.config.gpu);
     let spec = CreateSpec {
         name: opts.name,

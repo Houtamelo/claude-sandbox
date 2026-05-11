@@ -255,7 +255,7 @@ fn prepare_container(
     lifecycle::ensure_running(podman, &name)?;
     // Idempotent: grant the non-root `claude` user write access to the
     // bind-mounted dirs. Cheap and safe to repeat every start.
-    grant_acls(podman, &name)?;
+    grant_acls(podman, &name, project)?;
 
     let mut on_start_combined: Vec<String> =
         claude_sandbox::features::tailscale::on_start_commands(&cfg.tailscale, &name);
@@ -292,8 +292,25 @@ fn run_cs() -> Result<()> {
 
     let cli = CsCli::parse();
     logging::set_verbosity(cli.verbose);
-    // Inside the container, /work is always the project root.
-    let project = std::path::PathBuf::from("/work");
+    // CS_PROJECT_PATH is set by the host wrapper at container create time
+    // and points at the bind-mounted project root (same path inside and out).
+    // Fall back to walking up from CWD looking for .claude-sandbox.toml, or
+    // /work as a last resort for backward compatibility.
+    let project = std::env::var_os("CS_PROJECT_PATH")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::current_dir().ok().and_then(|cwd| {
+                let mut p: Option<&std::path::Path> = Some(&cwd);
+                while let Some(d) = p {
+                    if d.join(".claude-sandbox.toml").exists() {
+                        return Some(d.to_path_buf());
+                    }
+                    p = d.parent();
+                }
+                None
+            })
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("/work"));
     match cli.command {
         CsCmd::Status => {
             println!("project: {}", project.display());
@@ -421,9 +438,12 @@ fn start_in_worktree(
     } else {
         inner.to_string()
     };
+    // Worktree path is identical inside and outside (project bound at its
+    // host absolute path).
+    let wt_path = wt_dir.display().to_string();
     let cleanup = format!(
-        "trap 'rm -f /work/.worktrees/{w}/.cs-session' EXIT INT TERM; cd /work/.worktrees/{w} && exec {inner_cmd}",
-        w = worktree,
+        "trap 'rm -f {wt}/.cs-session' EXIT INT TERM; cd {wt} && exec {inner_cmd}",
+        wt = wt_path,
     );
     claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
 }
@@ -454,11 +474,16 @@ fn create_worktree_and_start(
     // Now exec into claude in that worktree.
     // `bash -c` (non-login) preserves PATH; `-lc` would drop /root/.local/bin.
     let flags = CLAUDE_FLAGS.join(" ");
+    let wt_path = project
+        .join(".worktrees")
+        .join(worktree)
+        .display()
+        .to_string();
     exec_into(
         &container,
         &[
             "bash", "-c",
-            &format!("cd /work/.worktrees/{} && exec claude {}", worktree, flags),
+            &format!("cd {wt_path} && exec claude {flags}"),
         ],
     )
 }

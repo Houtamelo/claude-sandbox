@@ -104,5 +104,5 @@ fn create_via_lib(sb: &Sandbox) {
     )
     .expect("ensure_container");
     let _ = common::podman(&["start", &sb.name]);
-    grant_acls(&podman, &sb.name).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
 }

@@ -67,7 +67,14 @@ fn container_has_default_mounts() {
     let chome = claude_sandbox::mounts::container_home();
     let chome_claude = chome.join(".claude").display().to_string();
     let chome_str = chome.display().to_string();
-    assert!(has_target("/work"), "missing /work bind. mounts: {:#?}", mounts);
+    let project_str = sb.path().display().to_string();
+    // Project is bind-mounted at its host absolute path so claude session
+    // CWDs match between in- and out-of-container.
+    assert!(
+        has_target(&project_str),
+        "missing {project_str} bind. mounts: {:#?}",
+        mounts
+    );
     assert!(
         has_target(&chome_claude),
         "missing {chome_claude} bind. mounts: {:#?}",
@@ -81,8 +88,8 @@ fn container_has_default_mounts() {
 }
 
 #[test]
-fn workdir_is_work_and_user_is_root() {
-    if should_skip("workdir_is_work_and_user_is_root") {
+fn workdir_is_project_host_path() {
+    if should_skip("workdir_is_project_host_path") {
         return;
     }
     let sb = Sandbox::new();
@@ -91,7 +98,12 @@ fn workdir_is_work_and_user_is_root() {
 
     let out = sb.podman_exec(&["pwd"]);
     assert!(out.status.success(), "pwd failed");
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/work");
+    // Workdir matches the host's absolute project path so claude --resume
+    // works between in- and out-of-container sessions.
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        sb.path().display().to_string()
+    );
 
     // Image's default user is the non-root `claude` user (UID 1000).
     // Container-root remains accessible via passwordless sudo for hooks
@@ -112,7 +124,8 @@ fn project_dir_visible_at_work() {
     create_container(&sb);
     start(&sb);
 
-    let out = sb.podman_exec(&["cat", "/work/MARKER.txt"]);
+    let marker_path = sb.path().join("MARKER.txt").display().to_string();
+    let out = sb.podman_exec(&["cat", &marker_path]);
     assert!(out.status.success(), "cat failed");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
@@ -192,7 +205,7 @@ fn grant_acls_post_start(sb: &Sandbox) {
     use claude_sandbox::container::create::grant_acls;
     use claude_sandbox::podman::runner::Podman;
     let podman = Podman::discover().expect("podman");
-    grant_acls(&podman, &sb.name).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
 }
 
 /// `podman start` so subsequent `podman exec` calls work. Verifies the

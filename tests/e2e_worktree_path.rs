@@ -58,9 +58,11 @@ fn claude_is_findable_via_the_actual_worktree_wrapper_shape() {
     // Now run the exact bash wrapper start_in_worktree produces, but with
     // `command -v claude` instead of `claude` (since we can't drive an
     // interactive claude session). The wrapper must NOT use `bash -lc`.
-    let wrapper = "trap 'rm -f /work/.worktrees/feat-x/.cs-session' EXIT INT TERM; \
-                   cd /work/.worktrees/feat-x && command -v claude";
-    let out = sb.podman_exec(&["bash", "-c", wrapper]);
+    let wt = sb.path().join(".worktrees/feat-x").display().to_string();
+    let wrapper = format!(
+        "trap 'rm -f {wt}/.cs-session' EXIT INT TERM; cd {wt} && command -v claude"
+    );
+    let out = sb.podman_exec(&["bash", "-c", &wrapper]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -99,7 +101,7 @@ fn create_via_lib(sb: &Sandbox) {
     .expect("ensure_container");
     // grant_acls needs a running container.
     let _ = common::podman(&["start", &sb.name]);
-    grant_acls(&podman, &sb.name).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
 }
 
 fn init_git_with_commit(path: &std::path::Path) {

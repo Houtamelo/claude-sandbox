@@ -31,9 +31,13 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
     let home = paths::home();
     let chome = container_home();
     let mut v = vec![
+        // Bind the project at its host path. Claude Code records the
+        // session's CWD as an absolute path and refuses `--resume` when
+        // the current CWD differs. Mounting host_path -> host_path keeps
+        // paths identical inside and outside, so resume works.
         Volume::Bind(Mount {
             host: project_path.to_path_buf(),
-            container: PathBuf::from("/work"),
+            container: project_path.to_path_buf(),
             ro: false,
         }),
         // Persistent claude state (credentials, settings, projects, sessions).
@@ -138,7 +142,7 @@ fn spec_to_volume(m: &MountSpec, project: &Path) -> Volume {
 pub fn toml_mount(project: &Path, agent_writable: bool) -> Volume {
     Volume::Bind(Mount {
         host: project.join(".claude-sandbox.toml"),
-        container: PathBuf::from("/work/.claude-sandbox.toml"),
+        container: project.join(".claude-sandbox.toml"),
         ro: !agent_writable,
     })
 }

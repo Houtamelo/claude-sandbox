@@ -16,9 +16,11 @@ nothing you do here can damage the host system.
 
 ## Layout
 
-- `/work` — the user's project (bind-mounted from the host). **Edits
-  here propagate to the host.** Treat this dir as you would the user's
-  real project on the host.
+- The user's project is bind-mounted **at its host absolute path**
+  (same path inside as outside, e.g. `~/Documents/projects/foo` is
+  `~/Documents/projects/foo` here too). The env var `$CS_PROJECT_PATH`
+  always points at the project root. **Edits propagate to the host.**
+  Treat this dir as you would the user's real project on the host.
 - `~` (your home) is bind-mounted partially: `~/.claude/` (settings,
   credentials, agents, plugins), `~/.claude.json` (onboarding/account
   state), `~/.cache/claude-cli-nodejs/`, and `~/.cache/claude/` all map
@@ -55,7 +57,7 @@ down`**, so the install vanishes on container reset. The host user may
 also recreate the container occasionally (image rebuild, reboot quirks).
 
 To make a dependency survive resets, append the install command to
-`/work/.claude-sandbox.deps.sh`. This file:
+`$CS_PROJECT_PATH/.claude-sandbox.deps.sh`. This file:
 
 - Lives alongside the user's `.claude-sandbox.toml` and is editable by you.
 - Runs as **root** on every container creation (no sudo prefix needed inside).
@@ -68,7 +70,7 @@ Workflow:
 sudo apt install -y ripgrep
 
 # Persist it for future container recreations:
-echo "apt install -y ripgrep" >> /work/.claude-sandbox.deps.sh
+echo "apt install -y ripgrep" >> $CS_PROJECT_PATH/.claude-sandbox.deps.sh
 
 # If you want to verify the script works idempotently right now:
 cs apply

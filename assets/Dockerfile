@@ -40,12 +40,12 @@ RUN mkdir -p "$(dirname "$HOSTHOME")" \
  && chmod 0440 /etc/sudoers.d/claude \
  && echo "umask 002" >> "$HOSTHOME/.bashrc"
 
-# Bind-mounted project dir at /work is owned by container UID 0 (host user
-# via userns), but the agent runs as `claude` (UID 1000). Git refuses to
-# operate on a repo owned by a different user — disable the dubious-ownership
-# check for /work specifically. ACLs grant write; this just stops the check.
-RUN git config --system --add safe.directory /work \
- && git config --system --add safe.directory '/work/.worktrees/*'
+# Bind-mounted project dirs are owned by container UID 0 (host user via
+# userns), but the agent runs as `claude` (UID 1000). Git refuses to
+# operate on a repo owned by a different user. Wildcard safe.directory
+# applies to any bind-mounted project, regardless of its host-mirrored path.
+# ACLs (set at runtime) grant write; this just stops the check.
+RUN git config --system --add safe.directory '*'
 
 # Sandbox-self-awareness instructions for the agent. Placed at the filesystem
 # root because Claude Code walks up from PWD looking for CLAUDE.md files;

@@ -99,5 +99,5 @@ fn create_with_setup(sb: &Sandbox) {
         run_setup(&podman, &sb.name, sb.path(), &cfg.setup).expect("setup");
     }
     let _ = common::podman(&["start", &sb.name]);
-    grant_acls(&podman, &sb.name).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
 }

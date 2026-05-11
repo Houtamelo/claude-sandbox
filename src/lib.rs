@@ -13,4 +13,5 @@ pub mod picker;
 pub mod podman;
 pub mod project;
 pub mod registry;
+pub mod terminal;
 pub mod worktree;

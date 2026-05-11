@@ -237,6 +237,7 @@ fn start_goal_main(
     let mut argv: Vec<&str> = vec!["claude", "-p"];
     argv.extend_from_slice(CLAUDE_FLAGS);
     argv.push(&goal_arg);
+    claude_sandbox::terminal::set_title(project, None);
     exec_into(&name, &argv)
 }
 
@@ -282,6 +283,7 @@ fn start_goal_in_worktree(
         "trap 'rm -f {wt}/.cs-session' EXIT INT TERM; cd {wt} && exec {inner_cmd}",
         wt = wt_path,
     );
+    claude_sandbox::terminal::set_title(project, Some(worktree));
     claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
 }
 
@@ -390,6 +392,7 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
     if inner == "claude" {
         argv.extend_from_slice(CLAUDE_FLAGS);
     }
+    claude_sandbox::terminal::set_title(project, None);
     exec_into(&name, &argv)
 }
 
@@ -569,6 +572,7 @@ fn start_in_worktree(
         "trap 'rm -f {wt}/.cs-session' EXIT INT TERM; cd {wt} && exec {inner_cmd}",
         wt = wt_path,
     );
+    claude_sandbox::terminal::set_title(project, Some(worktree));
     claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
 }
 
@@ -603,6 +607,7 @@ fn create_worktree_and_start(
         .join(worktree)
         .display()
         .to_string();
+    claude_sandbox::terminal::set_title(project, Some(worktree));
     exec_into(
         &container,
         &[

@@ -23,7 +23,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 toml_edit = "0.22"
 dialoguer = { version = "0.11", default-features = false }
-nix = { version = "0.29", features = ["process", "signal"] }
+nix = { version = "0.29", features = ["process", "signal", "user"] }
 which = "6"
 dirs = "5"
 anyhow = "1"

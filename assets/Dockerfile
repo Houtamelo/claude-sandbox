@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git sudo bash openssh-client \
       build-essential pkg-config jq direnv acl \
+      pulseaudio-utils sound-theme-freedesktop \
     && rm -rf /var/lib/apt/lists/*
 
 # Tailscale (from official repo).

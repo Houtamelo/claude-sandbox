@@ -3,6 +3,19 @@ use crate::paths;
 
 pub fn resolve(cfg: &ConfigFile, project: &std::path::Path) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
+    // PulseAudio: point paplay/etc. at the bind-mounted host socket. The
+    // socket is mounted unconditionally if it exists on the host (see
+    // mounts::default_volumes); setting PULSE_SERVER ensures paplay finds
+    // it even when XDG_RUNTIME_DIR isn't set inside.
+    let uid = nix::unistd::Uid::current().as_raw();
+    let pulse_sock = std::path::PathBuf::from(format!("/run/user/{uid}/pulse/native"));
+    if pulse_sock.exists() {
+        out.push((
+            "PULSE_SERVER".into(),
+            format!("unix:{}", pulse_sock.display()),
+        ));
+    }
+
     for (k, v) in &cfg.env {
         out.push((k.clone(), paths::expand(v)));
     }

@@ -80,6 +80,18 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
             ro: true,
         }));
     }
+    // PulseAudio socket pass-through so notification sounds (e.g. stop-hook
+    // /usr/bin/paplay), audio playback, etc. reach the host's audio server.
+    // Works against both real PulseAudio and PipeWire's pulse-compat layer.
+    let uid = nix::unistd::Uid::current().as_raw();
+    let pulse_sock = std::path::PathBuf::from(format!("/run/user/{uid}/pulse/native"));
+    if pulse_sock.exists() {
+        v.push(Volume::Bind(Mount {
+            host: pulse_sock.clone(),
+            container: pulse_sock,
+            ro: false,
+        }));
+    }
     v
 }
 

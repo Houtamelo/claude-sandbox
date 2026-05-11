@@ -47,6 +47,13 @@ RUN mkdir -p "$(dirname "$HOSTHOME")" \
 RUN git config --system --add safe.directory /work \
  && git config --system --add safe.directory '/work/.worktrees/*'
 
+# Sandbox-self-awareness instructions for the agent. Placed at the filesystem
+# root because Claude Code walks up from PWD looking for CLAUDE.md files;
+# /CLAUDE.md is the topmost ancestor of /work and gets picked up
+# unconditionally, without polluting either ~/.claude/ (bind-mounted host config)
+# or /work (the user's project).
+COPY CLAUDE.md /CLAUDE.md
+
 # Our binary at the canonical location for any user.
 COPY claude-sandbox /usr/local/bin/claude-sandbox
 RUN chmod +x /usr/local/bin/claude-sandbox \

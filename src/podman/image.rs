@@ -10,6 +10,12 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     let bin_src = std::env::current_exe()?;
     let bin_dst = config_dir.join("claude-sandbox");
     std::fs::copy(&bin_src, &bin_dst)?;
+    // Sandbox-self-awareness CLAUDE.md baked into the image at /CLAUDE.md.
+    // We embed it in the binary so rebuilds always pick up the latest version,
+    // and write it to the build context alongside the binary so the COPY in
+    // the Dockerfile can pick it up.
+    let claude_md_dst = config_dir.join("CLAUDE.md");
+    std::fs::write(&claude_md_dst, include_str!("../../assets/CLAUDE.md"))?;
     // Pass the host's HOME so the image's `claude` user has a matching home
     // path. Claude Code's setup-state cache is keyed by HOME — if the
     // in-container HOME doesn't match, claude inside starts fresh every time.
@@ -32,6 +38,7 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
         config_dir.display().to_string(),
     ]);
     let _ = std::fs::remove_file(&bin_dst);
+    let _ = std::fs::remove_file(&claude_md_dst);
     res
 }
 

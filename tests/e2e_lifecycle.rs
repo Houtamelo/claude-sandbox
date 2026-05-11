@@ -205,7 +205,7 @@ fn grant_acls_post_start(sb: &Sandbox) {
     use claude_sandbox::container::create::grant_acls;
     use claude_sandbox::podman::runner::Podman;
     let podman = Podman::discover().expect("podman");
-    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path(), &[]).expect("grant_acls");
 }
 
 /// `podman start` so subsequent `podman exec` calls work. Verifies the

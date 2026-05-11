@@ -124,7 +124,7 @@ fn create_and_start(sb: &Sandbox) {
         String::from_utf8_lossy(&out.stderr)
     );
     // Mirror start_or_shell: grant the non-root claude user access to /work.
-    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path(), &[]).expect("grant_acls");
 }
 
 fn init_git_with_commit(path: &std::path::Path) {

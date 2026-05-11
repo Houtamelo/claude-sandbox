@@ -101,7 +101,7 @@ fn create_via_lib(sb: &Sandbox) {
     .expect("ensure_container");
     // grant_acls needs a running container.
     let _ = common::podman(&["start", &sb.name]);
-    grant_acls(&podman, &sb.name, sb.path()).expect("grant_acls");
+    grant_acls(&podman, &sb.name, sb.path(), &[]).expect("grant_acls");
 }
 
 fn init_git_with_commit(path: &std::path::Path) {

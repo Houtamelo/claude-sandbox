@@ -17,6 +17,18 @@ macro_rules! info {
     };
 }
 
+/// Phase header for the bootstrap pipeline — prints `==> <msg>` to stderr
+/// at every verbosity level. Use sparingly: only at the start of an
+/// actual bootstrap phase the user would benefit from seeing
+/// ("Loading configuration", "Creating container", "Running setup
+/// hooks", etc.), not for every podman invocation.
+#[macro_export]
+macro_rules! step {
+    ($($arg:tt)*) => {
+        eprintln!("==> {}", format!($($arg)*));
+    };
+}
+
 #[macro_export]
 macro_rules! debug1 {
     ($($arg:tt)*) => {

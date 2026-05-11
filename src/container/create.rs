@@ -103,26 +103,52 @@ pub fn run_deps_script(podman: &Podman, name: &str, project: &Path) -> Result<()
 }
 
 /// Grant the in-container `claude` user write access to the bind-mounted
-/// project dir and `~/.claude` so a non-root agent can edit existing
-/// host-owned files. ACLs are additive (no ownership change) and propagate
-/// to the host as entries for the userns sub-uid — harmless metadata.
+/// project dir, `~/.claude`, and any user-declared rw mounts. ACLs are
+/// additive (no ownership change); the host inode gains an entry for the
+/// container-user's mapped sub-uid — harmless metadata to the host user
+/// (still owns the file).
 ///
-/// Safe to call on every start. Best-effort: failures are logged but
-/// non-fatal so a stale image without `acl` installed doesn't lock the
-/// user out — they can `claude-sandbox rebuild` to fix.
-pub fn grant_acls(podman: &Podman, name: &str, project: &Path) -> Result<()> {
+/// Why this is needed: in userns rootless mode, container `claude`
+/// (UID 1000 inside) maps to host sub-uid 100999. Files owned by the
+/// host user (UID 1000) with mode 600 — like `~/.pulumi/credentials.json`
+/// — are denied to host UID 100999 without an explicit ACL.
+///
+/// Safe to call on every start. Best-effort: failures are silently
+/// swallowed (`2>/dev/null` per `setfacl` call) so an exotic host path
+/// the user mounted doesn't fail the whole bootstrap. Trailing `true`
+/// keeps the bash script's exit code at zero.
+pub fn grant_acls(
+    podman: &Podman,
+    name: &str,
+    project: &Path,
+    user_mounts: &[crate::config::MountSpec],
+) -> Result<()> {
     let home = crate::mounts::container_home();
-    // Directories: recursive + default ACL so new entries inherit.
-    // File: single non-recursive ACL.
-    let cmd = format!(
+    // Bundled paths (always rw): project dir + Claude Code state dirs.
+    let mut cmd = format!(
         "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx \
             {project} {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null; \
-         setfacl -m u:{user}:rw {home}/.claude.json 2>/dev/null; \
-         true",
+         setfacl -m u:{user}:rw {home}/.claude.json 2>/dev/null; ",
         user = crate::mounts::CONTAINER_USER,
         home = home.display(),
         project = project.display(),
     );
+    // User-declared rw mounts (e.g. `~/.pulumi`, `~/.aws`, `~/.config/gcloud`).
+    // Skip ro mounts: agent doesn't need write, and we'd rather not add an
+    // ACL entry to a user-protected file unnecessarily.
+    for m in user_mounts {
+        if m.ro {
+            continue;
+        }
+        let path = crate::paths::expand(&m.container);
+        cmd.push_str(&format!(
+            "[ -d {path} ] && setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx {path} 2>/dev/null \
+             || setfacl -m u:{user}:rw {path} 2>/dev/null; ",
+            path = path,
+            user = crate::mounts::CONTAINER_USER,
+        ));
+    }
+    cmd.push_str("true");
     let args = crate::podman::args::exec_args_as(name, Some("0"), false, &["bash", "-c", &cmd]);
     let _ = podman.run(&args);
     Ok(())
@@ -144,9 +170,8 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         if existing_hash.as_deref() == current_hash.as_deref() {
             return Ok(false);
         }
-        eprintln!(
-            "claude-sandbox: .claude-sandbox.toml changed since container \
-             was created — recreating (named home volume survives)"
+        crate::step!(
+            "Configuration changed — recreating container (named home volume survives)"
         );
         podman.run(&crate::podman::args::rm_args(opts.name))?;
         let _ = crate::registry::remove(opts.name);
@@ -187,6 +212,7 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         .collect::<Result<Vec<_>>>()?;
     let ports = crate::network::resolve(&port_requests)?;
 
+    crate::step!("Creating container '{}' from image '{}'", opts.name, opts.image);
     let network = opts.config.network.as_deref().unwrap_or("bridge");
     // Workdir is the project's host path (same as the bind-mount target),
     // so claude's session-CWD matches between in- and out-of-container.

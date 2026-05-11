@@ -305,9 +305,11 @@ fn prepare_container(
 
     let toml_path = project.join(".claude-sandbox.toml");
     if !toml_path.exists() {
+        claude_sandbox::step!("Initializing project marker (.claude-sandbox.toml)");
         cfg_edit::create_minimal(&toml_path, derived_name)?;
     }
 
+    claude_sandbox::step!("Loading configuration");
     let global = paths::config_dir().join("config.toml");
     let cfg = load_merged(Some(&global), Some(&toml_path))?;
     let name = cfg.name.clone().unwrap_or_else(|| derived_name.to_string());
@@ -337,23 +339,35 @@ fn prepare_container(
     )?;
 
     if just_created {
+        if !cfg.setup.is_empty() {
+            claude_sandbox::step!("Running setup hooks ({} step(s))", cfg.setup.len());
+        }
         run_setup(podman, &name, project, &cfg.setup)?;
         // After setup hooks (which run once on create), re-apply the agent-
         // editable dependency manifest. This is what survives container reset:
         // agents append `apt install -y X` etc. to .claude-sandbox.deps.sh
         // and it auto-applies on next create without needing user intervention.
+        if project.join(".claude-sandbox.deps.sh").exists() {
+            claude_sandbox::step!("Running dependency install script (.claude-sandbox.deps.sh)");
+        }
         run_deps_script(podman, &name, project)?;
     }
 
     lifecycle::ensure_running(podman, &name)?;
     // Idempotent: grant the non-root `claude` user write access to the
     // bind-mounted dirs. Cheap and safe to repeat every start.
-    grant_acls(podman, &name, project)?;
+    grant_acls(podman, &name, project, &cfg.mount)?;
 
     let mut on_start_combined: Vec<String> =
         claude_sandbox::features::tailscale::on_start_commands(&cfg.tailscale, &name);
     on_start_combined.extend(cfg.on_start.iter().cloned());
 
+    if !on_start_combined.is_empty() {
+        claude_sandbox::step!(
+            "Running on_start hooks ({} step(s))",
+            on_start_combined.len()
+        );
+    }
     hooks::run(
         podman,
         &name,

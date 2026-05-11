@@ -16,23 +16,46 @@ impl Podman {
         Ok(Self { bin })
     }
 
-    /// Invoke `podman <args>` with stdout/stderr streaming straight to the
-    /// user's terminal. Returns success/failure only — the user has already
-    /// seen the output inline. Use this for lifecycle ops where progress
-    /// (image pull, apt-install in setup hooks, `podman create` echoing
-    /// the new container ID, etc.) is informative.
+    /// Invoke `podman <args>`. Output behavior depends on global verbosity:
+    ///
+    /// - **0 (default, "basic")**: stdio is captured silently. The user
+    ///   sees only the high-level `==>` phase headers emitted by
+    ///   `step!()`. On failure, the captured stderr is folded into the
+    ///   returned error so the user gets the diagnostic.
+    /// - **≥1 (verbose, `-v`)**: stdio inherits, so the user sees the
+    ///   raw podman output inline (image pulls, apt-install progress,
+    ///   container IDs, etc.).
+    ///
+    /// For commands whose stdout we need to parse (inspect / ps), use
+    /// [`Self::run_capture`] explicitly.
     pub fn run(&self, args: &[String]) -> Result<()> {
         debug1!("podman {}", args.join(" "));
-        let status = Command::new(&self.bin)
+        if crate::logging::verbosity() >= 1 {
+            let status = Command::new(&self.bin)
+                .args(args)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?;
+            if !status.success() {
+                return Err(Error::Podman(format!(
+                    "podman {} exited {} (see output above)",
+                    args.first().map(|s| s.as_str()).unwrap_or(""),
+                    status.code().unwrap_or(-1)
+                )));
+            }
+            return Ok(());
+        }
+        let output = Command::new(&self.bin)
             .args(args)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
-        if !status.success() {
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::Podman(format!(
-                "podman {} exited {} (see output above)",
+                "podman {} failed:\n{}",
                 args.first().map(|s| s.as_str()).unwrap_or(""),
-                status.code().unwrap_or(-1)
+                stderr.trim()
             )));
         }
         Ok(())

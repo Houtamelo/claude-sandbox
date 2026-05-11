@@ -13,6 +13,11 @@ use claude_sandbox::logging;
 
 const DEFAULT_IMAGE: &str = "claude-sandbox:0.1";
 
+/// The point of the sandbox is to let claude run with no permission
+/// prompts — the container is the safety boundary, not the prompt UI.
+/// Passed on every `claude` invocation; ignored for `bash` (shell) launches.
+const CLAUDE_FLAGS: &[&str] = &["--dangerously-skip-permissions"];
+
 fn load_cfg(project: &std::path::Path) -> Result<ConfigFile> {
     let toml_path = project.join(".claude-sandbox.toml");
     let global = paths::config_dir().join("config.toml");
@@ -247,7 +252,11 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
         false,
     )?;
 
-    exec_into(&name, &[inner])
+    let mut argv: Vec<&str> = vec![inner];
+    if inner == "claude" {
+        argv.extend_from_slice(CLAUDE_FLAGS);
+    }
+    exec_into(&name, &argv)
 }
 
 fn run_cs() -> Result<()> {
@@ -357,10 +366,14 @@ fn start_in_worktree(
     // Use `bash -c` (non-login). A login shell sources /etc/profile which
     // resets PATH and drops /root/.local/bin — that hides the `claude`
     // binary installed there by the Anthropic installer.
+    let inner_cmd = if inner == "claude" {
+        format!("claude {}", CLAUDE_FLAGS.join(" "))
+    } else {
+        inner.to_string()
+    };
     let cleanup = format!(
-        "trap 'rm -f /work/.worktrees/{w}/.cs-session' EXIT INT TERM; cd /work/.worktrees/{w} && exec {inner}",
+        "trap 'rm -f /work/.worktrees/{w}/.cs-session' EXIT INT TERM; cd /work/.worktrees/{w} && exec {inner_cmd}",
         w = worktree,
-        inner = inner,
     );
     claude_sandbox::container::exec::exec_into(container, &["bash", "-c", &cleanup])
 }
@@ -391,11 +404,12 @@ fn create_worktree_and_start(
     let _ = project;
     // Now exec into claude in that worktree.
     // `bash -c` (non-login) preserves PATH; `-lc` would drop /root/.local/bin.
+    let flags = CLAUDE_FLAGS.join(" ");
     exec_into(
         container,
         &[
             "bash", "-c",
-            &format!("cd /work/.worktrees/{} && exec claude", worktree),
+            &format!("cd /work/.worktrees/{} && exec claude {}", worktree, flags),
         ],
     )
 }

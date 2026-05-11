@@ -53,8 +53,13 @@ pub fn run_setup(
 /// user out — they can `claude-sandbox rebuild` to fix.
 pub fn grant_acls(podman: &Podman, name: &str) -> Result<()> {
     let home = crate::mounts::container_home();
+    // Directories: recursive + default ACL so new entries inherit.
+    // File: single non-recursive ACL.
     let cmd = format!(
-        "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx /work {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null || true",
+        "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx \
+            /work {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null; \
+         setfacl -m u:{user}:rw {home}/.claude.json 2>/dev/null; \
+         true",
         user = crate::mounts::CONTAINER_USER,
         home = home.display(),
     );

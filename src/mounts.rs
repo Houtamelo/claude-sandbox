@@ -42,6 +42,15 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
             container: chome.join(".claude"),
             ro: false,
         }),
+        // Top-level state file — NOT inside ~/.claude/. Holds
+        // hasCompletedOnboarding, userID, oauthAccount, tipsHistory, etc.
+        // Without this, claude treats every session as first-run even
+        // with all the directory state above bind-mounted.
+        Volume::Bind(Mount {
+            host: ensure_file(home.join(".claude.json")),
+            container: chome.join(".claude.json"),
+            ro: false,
+        }),
         // Setup-state / onboarding cache; without this, claude treats every
         // container session as first-run and re-prompts for theme + login.
         // Create on host if absent so the bind-mount has something to point at.
@@ -76,6 +85,21 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
 
 fn ensure_dir(p: PathBuf) -> PathBuf {
     let _ = std::fs::create_dir_all(&p);
+    p
+}
+
+/// Touch a file so a bind-mount has a target to bind to. If the file
+/// already exists (the common case for ~/.claude.json on real systems)
+/// this is a no-op. Without this, podman would create a *directory*
+/// at the bind-mount target and Claude would write to an empty file
+/// inside it instead of the expected location.
+fn ensure_file(p: PathBuf) -> PathBuf {
+    if !p.exists() {
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::File::create(&p);
+    }
     p
 }
 

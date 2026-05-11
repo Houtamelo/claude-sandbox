@@ -62,11 +62,9 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: WorktreeCmd,
     },
-    /// Print or write defaults for global config / Dockerfile
-    Init {
-        #[arg(long)]
-        force: bool,
-    },
+    /// Mark the current directory as a project by writing a minimal
+    /// `.claude-sandbox.toml`. Idempotent (no-op if the file already exists).
+    Init,
 }
 
 #[derive(Subcommand, Debug)]

@@ -36,6 +36,12 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
+            if matches!(&e, claude_sandbox::error::Error::ProjectNotFound(_)) {
+                eprintln!(
+                    "hint: run `claude-sandbox init` to mark this directory as a project, \
+                     or `git init` to make it a git repo."
+                );
+            }
             ExitCode::FAILURE
         }
     }
@@ -44,26 +50,26 @@ fn main() -> ExitCode {
 fn run_host() -> Result<()> {
     let cli = HostCli::parse();
     logging::set_verbosity(cli.verbose);
+
+    // `init` is the only command that runs without podman OR a project.
+    if let Some(Cmd::Init) = &cli.command {
+        let cwd = std::env::current_dir()?;
+        let toml_path = cwd.join(".claude-sandbox.toml");
+        if toml_path.exists() {
+            println!("already initialized: {}", toml_path.display());
+            return Ok(());
+        }
+        let name = derive_name(&cwd, &paths::home());
+        cfg_edit::create_minimal(&toml_path, &name)?;
+        println!("initialized: {}", toml_path.display());
+        return Ok(());
+    }
+
     let podman = Podman::discover()?;
 
-    // Commands that don't require a project context.
+    // Commands that need podman but not a project.
     if let Some(cmd) = &cli.command {
         match cmd {
-            Cmd::Init { force } => {
-                let cfg_dir = claude_sandbox::paths::config_dir();
-                std::fs::create_dir_all(&cfg_dir)?;
-                let dockerfile = cfg_dir.join("Dockerfile");
-                let config_toml = cfg_dir.join("config.toml");
-                if !dockerfile.exists() || *force {
-                    std::fs::write(&dockerfile, include_str!("../assets/Dockerfile"))?;
-                    println!("wrote {}", dockerfile.display());
-                }
-                if !config_toml.exists() || *force {
-                    std::fs::write(&config_toml, include_str!("../assets/default-config.toml"))?;
-                    println!("wrote {}", config_toml.display());
-                }
-                return Ok(());
-            }
             Cmd::Ls { orphans, size } => return claude_sandbox::container::ls::ls(&podman, *orphans, *size),
             Cmd::Rebuild { recreate } => {
                 claude_sandbox::podman::image::rebuild(&podman)?;
@@ -177,7 +183,7 @@ fn run_host() -> Result<()> {
                 resolved_name,
             ])
         }
-        Cmd::Ls { .. } | Cmd::Rebuild { .. } | Cmd::Init { .. } => unreachable!(),
+        Cmd::Ls { .. } | Cmd::Rebuild { .. } | Cmd::Init => unreachable!(),
     }
 }
 

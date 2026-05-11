@@ -192,9 +192,25 @@ fn run_host() -> Result<()> {
     }
 }
 
-fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str, inner: &str) -> Result<()> {
-    let toml_path = project.join(".claude-sandbox.toml");
+/// Auto-create the toml if missing, load + merge config, resolve the
+/// container name (honoring `name = "..."` overrides and registry-based
+/// collision suffixing), create the container if missing, run setup +
+/// deps on first create, ensure running, grant ACLs, run on_start hooks.
+///
+/// Returns the resolved container name. Used by both the main-checkout
+/// launch path and the worktree launch path so they share container
+/// lifecycle and only differ in their final exec.
+fn prepare_container(
+    podman: &Podman,
+    project: &std::path::Path,
+    derived_name: &str,
+) -> Result<String> {
+    use claude_sandbox::container::create::{
+        ensure_container, grant_acls, run_deps_script, run_setup, CreateOptions,
+    };
+    use claude_sandbox::hooks;
 
+    let toml_path = project.join(".claude-sandbox.toml");
     if !toml_path.exists() {
         cfg_edit::create_minimal(&toml_path, derived_name)?;
     }
@@ -216,11 +232,6 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
     let name = resolved;
 
     let image = cfg.image.clone().unwrap_or_else(|| DEFAULT_IMAGE.into());
-
-    use claude_sandbox::container::create::{
-        ensure_container, grant_acls, run_deps_script, run_setup, CreateOptions,
-    };
-    use claude_sandbox::hooks;
 
     let just_created = ensure_container(
         podman,
@@ -263,6 +274,11 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
         hooks::HookUser::Root,
     )?;
 
+    Ok(name)
+}
+
+fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str, inner: &str) -> Result<()> {
+    let name = prepare_container(podman, project, derived_name)?;
     let mut argv: Vec<&str> = vec![inner];
     if inner == "claude" {
         argv.extend_from_slice(CLAUDE_FLAGS);
@@ -345,34 +361,37 @@ fn ensure_running_if_exists(podman: &Podman, name: &str) -> Result<()> {
 fn targeted_start(
     podman: &Podman,
     project: &std::path::Path,
-    container: &str,
+    derived_name: &str,
     inner: &str,
     worktree: Option<&str>,
     force: bool,
 ) -> Result<()> {
     match worktree {
-        None => start_or_shell(podman, project, container, inner),
-        Some(w) => start_in_worktree(podman, project, container, w, inner, force),
+        None => start_or_shell(podman, project, derived_name, inner),
+        Some(w) => start_in_worktree(podman, project, derived_name, w, inner, force),
     }
 }
 
 fn start_in_worktree(
     podman: &Podman,
     project: &std::path::Path,
-    container: &str,
+    derived_name: &str,
     worktree: &str,
     inner: &str,
     force: bool,
 ) -> Result<()> {
     use claude_sandbox::worktree::claim::{self, ClaimState};
+    // Full container lifecycle: create-if-missing, setup + deps on first
+    // create, ensure running, ACLs, on_start hooks. Returns the resolved
+    // (config-aware, collision-suffixed) container name.
+    let container = prepare_container(podman, project, derived_name)?;
     let wt_dir = project.join(".worktrees").join(worktree);
-    ensure_running_if_exists(podman, container)?;
 
     // Auto-create worktree if missing (spec §5.3: `-w feat-x` creates if absent).
     if !wt_dir.exists() {
         podman.run_inherit(&[
             "exec".into(),
-            container.into(),
+            container.clone(),
             "cs".into(),
             "worktree".into(),
             "add".into(),
@@ -406,22 +425,21 @@ fn start_in_worktree(
         "trap 'rm -f /work/.worktrees/{w}/.cs-session' EXIT INT TERM; cd /work/.worktrees/{w} && exec {inner_cmd}",
         w = worktree,
     );
-    claude_sandbox::container::exec::exec_into(container, &["bash", "-c", &cleanup])
+    claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
 }
 
 fn create_worktree_and_start(
     podman: &Podman,
     project: &std::path::Path,
-    container: &str,
+    derived_name: &str,
     worktree: &str,
     branch: Option<&str>,
 ) -> Result<()> {
     use claude_sandbox::container::exec::exec_into;
-    // Ensure container running first so cs is available.
-    ensure_running_if_exists(podman, container)?;
+    let container = prepare_container(podman, project, derived_name)?;
     let mut args: Vec<String> = vec![
         "exec".into(),
-        container.into(),
+        container.clone(),
         "cs".into(),
         "worktree".into(),
         "add".into(),
@@ -437,7 +455,7 @@ fn create_worktree_and_start(
     // `bash -c` (non-login) preserves PATH; `-lc` would drop /root/.local/bin.
     let flags = CLAUDE_FLAGS.join(" ");
     exec_into(
-        container,
+        &container,
         &[
             "bash", "-c",
             &format!("cd /work/.worktrees/{} && exec claude {}", worktree, flags),

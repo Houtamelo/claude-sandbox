@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::config::edit::set_name;
 use crate::error::{Error, Result};
 use crate::podman::runner::Podman;
+use crate::registry;
 
 pub fn rename(
     podman: &Podman,
@@ -20,5 +21,9 @@ pub fn rename(
     if toml.exists() {
         set_name(&toml, new_name)?;
     }
+    // Keep the registry consistent: drop the old entry, add the new one.
+    // Without this, `ls` would mislabel the renamed container as [orphan].
+    let _ = registry::remove(old_name);
+    let _ = registry::upsert(new_name, project);
     Ok(())
 }

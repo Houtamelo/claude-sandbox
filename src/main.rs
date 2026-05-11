@@ -119,8 +119,12 @@ fn run_host() -> Result<()> {
             lifecycle::down(&podman, &resolved_name)
         }
         Cmd::Status => {
-            let s = st::collect(&podman, &derived_name)?;
-            st::print(&s, &derived_name);
+            let resolved_name = load_cfg(&project)
+                .ok()
+                .and_then(|c| c.name)
+                .unwrap_or_else(|| derived_name.clone());
+            let s = st::collect(&podman, &resolved_name)?;
+            st::print(&s, &resolved_name);
             Ok(())
         }
         Cmd::Worktree { cmd } => {
@@ -161,12 +165,16 @@ fn run_host() -> Result<()> {
             claude_sandbox::container::migrate::migrate(&name, &new_path)
         }
         Cmd::Logs => {
+            let resolved_name = load_cfg(&project)
+                .ok()
+                .and_then(|c| c.name)
+                .unwrap_or_else(|| derived_name.clone());
             podman.run_inherit(&[
                 "logs".into(),
                 "--tail".into(),
                 "200".into(),
                 "--follow".into(),
-                derived_name.clone(),
+                resolved_name,
             ])
         }
         Cmd::Ls { .. } | Cmd::Rebuild { .. } | Cmd::Init { .. } => unreachable!(),
@@ -339,12 +347,16 @@ fn start_in_worktree(
     // exec_into replaces the process; the claim survives until the wrapper exits.
     // We register a best-effort cleanup via a child-of-shell technique: wrap the exec in a sh -c
     // that removes the claim file after `claude` exits.
+    //
+    // Use `bash -c` (non-login). A login shell sources /etc/profile which
+    // resets PATH and drops /root/.local/bin — that hides the `claude`
+    // binary installed there by the Anthropic installer.
     let cleanup = format!(
-        "trap 'rm -f /work/.worktrees/{w}/.cs-session' EXIT INT TERM; cd /work/.worktrees/{w} && {inner}",
+        "trap 'rm -f /work/.worktrees/{w}/.cs-session' EXIT INT TERM; cd /work/.worktrees/{w} && exec {inner}",
         w = worktree,
         inner = inner,
     );
-    claude_sandbox::container::exec::exec_into(container, &["bash", "-lc", &cleanup])
+    claude_sandbox::container::exec::exec_into(container, &["bash", "-c", &cleanup])
 }
 
 fn create_worktree_and_start(
@@ -372,11 +384,12 @@ fn create_worktree_and_start(
     podman.run_inherit(&args)?;
     let _ = project;
     // Now exec into claude in that worktree.
+    // `bash -c` (non-login) preserves PATH; `-lc` would drop /root/.local/bin.
     exec_into(
         container,
         &[
-            "bash", "-lc",
-            &format!("cd /work/.worktrees/{} && claude", worktree),
+            "bash", "-c",
+            &format!("cd /work/.worktrees/{} && exec claude", worktree),
         ],
     )
 }

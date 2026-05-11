@@ -45,6 +45,9 @@ fn create_args_baseline() {
     // (Tumbleweed, Fedora). Container keeps rootless+userns isolation.
     assert!(args.contains(&"--security-opt".into()));
     assert!(args.contains(&"label=disable".into()));
+    // Discovery label so `ls` can find every container regardless of name.
+    assert!(args.contains(&"--label".into()));
+    assert!(args.contains(&"cs-managed=1".into()));
 }
 
 #[test]

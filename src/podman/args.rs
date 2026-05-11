@@ -38,6 +38,10 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         // mutate host file labels (unlike `:z` / `:Z` mount flags).
         "--security-opt".into(),
         "label=disable".into(),
+        // Marker label so `claude-sandbox ls` can find every container we own
+        // regardless of its derived name (which has no fixed prefix).
+        "--label".into(),
+        "cs-managed=1".into(),
     ];
     for vol in spec.volumes {
         v.push("--volume".into());

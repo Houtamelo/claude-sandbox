@@ -145,6 +145,8 @@ impl Drop for Sandbox {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+        // Also drop the registry entry so cross-test runs don't pollute it.
+        let _ = claude_sandbox::registry::remove(&self.name);
     }
 }
 

@@ -30,6 +30,14 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         "--network".into(),
         spec.network.into(),
         "--init".into(),
+        // Opt the container out of SELinux confinement (the rootless+userns
+        // protections remain). Without this, bind-mounted host paths labeled
+        // `user_tmp_t` / `user_home_t` are denied to the container's
+        // `container_t` context on SELinux-enabled hosts (openSUSE, Fedora,
+        // RHEL). `--security-opt label=disable` is per-container and does NOT
+        // mutate host file labels (unlike `:z` / `:Z` mount flags).
+        "--security-opt".into(),
+        "label=disable".into(),
     ];
     for vol in spec.volumes {
         v.push("--volume".into());

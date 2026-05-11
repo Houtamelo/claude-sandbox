@@ -41,6 +41,10 @@ fn create_args_baseline() {
     assert!(args.contains(&"claude-sandbox:0.1".into()));
     assert!(args.contains(&"sleep".into()));
     assert!(args.contains(&"infinity".into()));
+    // SELinux opt-out so bind-mounts work on SELinux-enabled hosts
+    // (Tumbleweed, Fedora). Container keeps rootless+userns isolation.
+    assert!(args.contains(&"--security-opt".into()));
+    assert!(args.contains(&"label=disable".into()));
 }
 
 #[test]

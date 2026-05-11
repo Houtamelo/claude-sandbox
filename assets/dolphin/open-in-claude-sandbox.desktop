@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Open in claude-sandbox
+Icon=utilities-terminal
+NoDisplay=true
+Exec=true
+MimeType=inode/directory;
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+Actions=openInClaudeSandbox
+
+[Desktop Action openInClaudeSandbox]
+Name=Open in claude-sandbox
+Icon=utilities-terminal
+# %f is the right-clicked dir (or current dir for empty-space clicks).
+# `; exec bash` keeps the terminal open after claude-sandbox exits so
+# any error message (e.g. project-not-found hint) stays visible.
+Exec=konsole --workdir %f -e bash -c "claude-sandbox; echo; exec bash"

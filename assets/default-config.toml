@@ -1,0 +1,8 @@
+# Global defaults for claude-sandbox.
+# Per-project .claude-sandbox.toml overrides these.
+
+ssh_agent = true
+network = "bridge"
+
+# Example: globally available tools.
+# setup = ["apt-get install -y ripgrep fd-find"]

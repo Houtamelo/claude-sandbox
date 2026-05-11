@@ -57,7 +57,13 @@ RUN chmod +x /usr/local/bin/claude-sandbox \
 USER claude
 ENV PATH=$HOSTHOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV HOME=$HOSTHOME
-RUN curl -fsSL https://claude.ai/install.sh | bash || true
+
+# CLAUDE_VERSION is passed by `claude-sandbox rebuild` so the in-container
+# claude matches the host's exactly (so settings.json and ~/.claude.json keys
+# don't diverge between newer/older versions). Falls back to "stable" if
+# unset — same channel the official installer uses by default.
+ARG CLAUDE_VERSION=stable
+RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION" || true
 
 WORKDIR /work
 

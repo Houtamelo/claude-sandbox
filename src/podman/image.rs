@@ -14,18 +14,40 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     // path. Claude Code's setup-state cache is keyed by HOME — if the
     // in-container HOME doesn't match, claude inside starts fresh every time.
     let host_home = paths::home().display().to_string();
+    // Detect host claude version so the in-container claude matches exactly.
+    // Newer/older claude versions have settings.json schema drift and emit
+    // different notifications (e.g. 2.1.138 vs 2.1.126 differ on skill-listing
+    // truncation behavior). Falls back to "stable" if no host claude.
+    let host_claude_version = detect_host_claude_version().unwrap_or_else(|| "stable".into());
     let res = podman.run_inherit(&[
         "build".into(),
         "-t".into(),
         "claude-sandbox:0.1".into(),
         "--build-arg".into(),
         format!("HOSTHOME={host_home}"),
+        "--build-arg".into(),
+        format!("CLAUDE_VERSION={host_claude_version}"),
         "-f".into(),
         dockerfile.display().to_string(),
         config_dir.display().to_string(),
     ]);
     let _ = std::fs::remove_file(&bin_dst);
     res
+}
+
+/// Parse `claude --version` output (e.g. "2.1.126 (Claude Code)") into the
+/// version string. Returns None if claude isn't installed or output is unexpected.
+fn detect_host_claude_version() -> Option<String> {
+    let out = std::process::Command::new("claude")
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Take the first whitespace-separated token (the semver).
+    stdout.split_whitespace().next().map(|s| s.to_string())
 }
 
 pub fn recreate_all(podman: &Podman) -> Result<()> {

@@ -43,6 +43,7 @@ Use these from inside the container:
 | `cs worktree rm <name>` | Remove a worktree (force + prune) |
 | `cs worktree current` | Print the current worktree name (or `main`) |
 | `cs apply` | Re-run `.claude-sandbox.deps.sh` (see below) without recreating the container |
+| `cs goal "<condition>"` | Launch a headless `/goal` claude session here. Keeps working turn-after-turn until a Haiku evaluator decides the condition is met. Useful when you want to hand off a long-running multi-phase task ("spec.md is fully implemented and all tests pass") and walk away. |
 
 If you decide you want to work in an isolated worktree (e.g. to try a
 risky refactor without touching `main`), use `cs worktree add`. The

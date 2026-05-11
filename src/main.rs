@@ -117,6 +117,10 @@ fn run_host() -> Result<()> {
             }
         }
         Cmd::Shell => start_or_shell(&podman, &project, &derived_name, "bash"),
+        Cmd::Goal { condition } => {
+            let cond = condition.join(" ");
+            start_goal(&podman, &project, &derived_name, &cond, cli.worktree.as_deref(), cli.force)
+        }
         Cmd::Stop => {
             let cfg = load_cfg(&project)?;
             let resolved_name = cfg.name.clone().unwrap_or_else(|| derived_name.clone());
@@ -190,6 +194,95 @@ fn run_host() -> Result<()> {
         }
         Cmd::Ls { .. } | Cmd::Rebuild { .. } | Cmd::Init => unreachable!(),
     }
+}
+
+/// Escape a string for single-quoted bash inclusion (`'foo'` form).
+/// Necessary because the worktree launch path wraps the inner command in
+/// `bash -c "..."` for trap/cleanup; the condition string must survive
+/// the shell verbatim.
+fn sh_squote(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{escaped}'")
+}
+
+/// Run `claude -p --dangerously-skip-permissions /goal <condition>`
+/// inside the project's container. Honors `-w worktree` like `start`.
+///
+/// `/goal` is a first-class Claude Code slash command that keeps the
+/// agent looping turn-after-turn until a lightweight evaluator decides
+/// the supplied condition is met. In `-p` (headless) mode it runs to
+/// completion non-interactively — set-and-forget for long-lived goals.
+fn start_goal(
+    podman: &Podman,
+    project: &std::path::Path,
+    derived_name: &str,
+    condition: &str,
+    worktree: Option<&str>,
+    force: bool,
+) -> Result<()> {
+    match worktree {
+        None => start_goal_main(podman, project, derived_name, condition),
+        Some(w) => start_goal_in_worktree(podman, project, derived_name, w, condition, force),
+    }
+}
+
+fn start_goal_main(
+    podman: &Podman,
+    project: &std::path::Path,
+    derived_name: &str,
+    condition: &str,
+) -> Result<()> {
+    let name = prepare_container(podman, project, derived_name)?;
+    let goal_arg = format!("/goal {condition}");
+    let mut argv: Vec<&str> = vec!["claude", "-p"];
+    argv.extend_from_slice(CLAUDE_FLAGS);
+    argv.push(&goal_arg);
+    exec_into(&name, &argv)
+}
+
+fn start_goal_in_worktree(
+    podman: &Podman,
+    project: &std::path::Path,
+    derived_name: &str,
+    worktree: &str,
+    condition: &str,
+    force: bool,
+) -> Result<()> {
+    use claude_sandbox::worktree::claim::{self, ClaimState};
+    let container = prepare_container(podman, project, derived_name)?;
+    let wt_dir = project.join(".worktrees").join(worktree);
+    if !wt_dir.exists() {
+        podman.run_inherit(&[
+            "exec".into(),
+            container.clone(),
+            "cs".into(),
+            "worktree".into(),
+            "add".into(),
+            worktree.into(),
+        ])?;
+    }
+    match claim::evaluate(&wt_dir)? {
+        ClaimState::Active(c) if !force => {
+            return Err(claude_sandbox::error::Error::Other(format!(
+                "worktree {} is in use by PID {} (--force to override)",
+                worktree, c.host_pid
+            )));
+        }
+        _ => {}
+    }
+    claim::write(&wt_dir)?;
+    let goal_arg = format!("/goal {condition}");
+    let inner_cmd = format!(
+        "claude -p {flags} {goal}",
+        flags = CLAUDE_FLAGS.join(" "),
+        goal = sh_squote(&goal_arg),
+    );
+    let wt_path = wt_dir.display().to_string();
+    let cleanup = format!(
+        "trap 'rm -f {wt}/.cs-session' EXIT INT TERM; cd {wt} && exec {inner_cmd}",
+        wt = wt_path,
+    );
+    claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
 }
 
 /// Auto-create the toml if missing, load + merge config, resolve the
@@ -343,6 +436,23 @@ fn run_cs() -> Result<()> {
                 Ok(())
             }
         },
+        CsCmd::Goal { condition } => {
+            let cond = condition.join(" ");
+            let goal_arg = format!("/goal {cond}");
+            let mut argv: Vec<&str> = vec!["claude", "-p"];
+            argv.extend_from_slice(CLAUDE_FLAGS);
+            argv.push(&goal_arg);
+            let status = std::process::Command::new(argv[0])
+                .args(&argv[1..])
+                .status()?;
+            if !status.success() {
+                return Err(claude_sandbox::error::Error::Other(format!(
+                    "claude /goal exited {}",
+                    status.code().unwrap_or(-1)
+                )));
+            }
+            Ok(())
+        }
         CsCmd::Apply => {
             let script = project.join(".claude-sandbox.deps.sh");
             if !script.exists() {

@@ -65,6 +65,16 @@ pub enum Cmd {
     /// Mark the current directory as a project by writing a minimal
     /// `.claude-sandbox.toml`. Idempotent (no-op if the file already exists).
     Init,
+    /// Launch claude in headless `/goal` mode. The agent keeps working
+    /// turn-after-turn until a Haiku evaluator decides the condition is
+    /// met. All trailing args are joined into the goal condition.
+    ///
+    ///   claude-sandbox goal "spec.md is implemented and all tests pass"
+    Goal {
+        /// The end-state condition. Joined with spaces if multiple args.
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        condition: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -94,6 +104,13 @@ pub enum CsCmd {
     /// against the current container. Auto-runs on container creation;
     /// use this when you've appended a line and want to install it now.
     Apply,
+    /// Launch a headless `/goal` claude session in the current directory.
+    /// Equivalent to running `claude -p --dangerously-skip-permissions
+    /// "/goal <condition>"` directly.
+    Goal {
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        condition: Vec<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

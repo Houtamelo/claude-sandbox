@@ -217,7 +217,9 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
 
     let image = cfg.image.clone().unwrap_or_else(|| DEFAULT_IMAGE.into());
 
-    use claude_sandbox::container::create::{ensure_container, grant_acls, run_setup, CreateOptions};
+    use claude_sandbox::container::create::{
+        ensure_container, grant_acls, run_deps_script, run_setup, CreateOptions,
+    };
     use claude_sandbox::hooks;
 
     let just_created = ensure_container(
@@ -232,6 +234,11 @@ fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str
 
     if just_created {
         run_setup(podman, &name, project, &cfg.setup)?;
+        // After setup hooks (which run once on create), re-apply the agent-
+        // editable dependency manifest. This is what survives container reset:
+        // agents append `apt install -y X` etc. to .claude-sandbox.deps.sh
+        // and it auto-applies on next create without needing user intervention.
+        run_deps_script(podman, &name, project)?;
     }
 
     lifecycle::ensure_running(podman, &name)?;
@@ -303,6 +310,26 @@ fn run_cs() -> Result<()> {
                 Ok(())
             }
         },
+        CsCmd::Apply => {
+            let script = project.join(".claude-sandbox.deps.sh");
+            if !script.exists() {
+                eprintln!("no /work/.claude-sandbox.deps.sh — create it first");
+                return Ok(());
+            }
+            // Re-run the deps script as root. We're already inside the
+            // container; just sudo the bash invocation.
+            let status = std::process::Command::new("sudo")
+                .arg("bash")
+                .arg(&script)
+                .status()?;
+            if !status.success() {
+                return Err(claude_sandbox::error::Error::Other(format!(
+                    "deps script exited {}",
+                    status.code().unwrap_or(-1)
+                )));
+            }
+            Ok(())
+        }
     }
 }
 

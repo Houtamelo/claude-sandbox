@@ -43,6 +43,31 @@ pub fn run_setup(
     Ok(())
 }
 
+/// Run the per-project dependency script as container root if it exists.
+/// File: `<project>/.claude-sandbox.deps.sh`. Lives alongside the toml.
+/// Editable by agents (rw via grant_acls), re-run on every container
+/// creation so deps survive `claude-sandbox down` + recreate.
+///
+/// Script is executed as `sudo bash /work/.claude-sandbox.deps.sh`, so
+/// commands inside don't need sudo prefixes. Abort-on-failure so the
+/// agent sees the error and can fix the script.
+pub fn run_deps_script(podman: &Podman, name: &str, project: &Path) -> Result<()> {
+    let script = project.join(".claude-sandbox.deps.sh");
+    if !script.exists() {
+        return Ok(());
+    }
+    // Container must be running for exec.
+    podman.run(&crate::podman::args::start_args(name))?;
+    let args = crate::podman::args::exec_args_as(
+        name,
+        Some("0"),
+        false,
+        &["bash", "/work/.claude-sandbox.deps.sh"],
+    );
+    podman.run(&args)?;
+    Ok(())
+}
+
 /// Grant the in-container `claude` user write access to the bind-mounted
 /// project dir and `~/.claude` so a non-root agent can edit existing
 /// host-owned files. ACLs are additive (no ownership change) and propagate

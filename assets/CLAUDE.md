@@ -40,11 +40,48 @@ Use these from inside the container:
 | `cs worktree ls` | List worktrees with their paths and branches |
 | `cs worktree rm <name>` | Remove a worktree (force + prune) |
 | `cs worktree current` | Print the current worktree name (or `main`) |
+| `cs apply` | Re-run `.claude-sandbox.deps.sh` (see below) without recreating the container |
 
 If you decide you want to work in an isolated worktree (e.g. to try a
 risky refactor without touching `main`), use `cs worktree add`. The
 host wrapper (`claude-sandbox -w <name>`) can later attach claude
 sessions to that specific worktree.
+
+## Persisting dependencies — `.claude-sandbox.deps.sh`
+
+When you `apt install` / `cargo install` / etc. a tool, it lives in the
+container's writable layer. **That layer is destroyed by `claude-sandbox
+down`**, so the install vanishes on container reset. The host user may
+also recreate the container occasionally (image rebuild, reboot quirks).
+
+To make a dependency survive resets, append the install command to
+`/work/.claude-sandbox.deps.sh`. This file:
+
+- Lives alongside the user's `.claude-sandbox.toml` and is editable by you.
+- Runs as **root** on every container creation (no sudo prefix needed inside).
+- Is the canonical place to record "this project needs tool X".
+
+Workflow:
+
+```bash
+# You install something now:
+sudo apt install -y ripgrep
+
+# Persist it for future container recreations:
+echo "apt install -y ripgrep" >> /work/.claude-sandbox.deps.sh
+
+# If you want to verify the script works idempotently right now:
+cs apply
+```
+
+Make commands idempotent (`apt install -y` is; `echo foo >> ~/.bashrc`
+is NOT — guard with a grep first). The script is a regular `bash` script,
+so you can use loops, conditionals, package-manager lists, etc.
+
+Differs from `.claude-sandbox.toml`'s `setup = [...]` array: `setup` is
+the **user's** static project config (typically committed); deps.sh is
+**your** scratch space for installs you needed mid-session. Both run on
+container creation; deps.sh runs after setup.
 
 ## Network
 

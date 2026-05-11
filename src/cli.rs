@@ -90,6 +90,10 @@ pub enum CsCmd {
         #[command(subcommand)]
         cmd: CsWorktreeCmd,
     },
+    /// Run the per-project dependency script (`.claude-sandbox.deps.sh`)
+    /// against the current container. Auto-runs on container creation;
+    /// use this when you've appended a line and want to install it now.
+    Apply,
 }
 
 #[derive(Subcommand, Debug)]

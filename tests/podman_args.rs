@@ -28,6 +28,7 @@ fn create_args_baseline() {
         ports: &[],
         workdir: &workdir,
         extra: &[],
+        toml_hash: None,
     };
 
     let args = create_args(&spec);
@@ -67,11 +68,51 @@ fn create_args_with_ports_and_ro_mount() {
         ports: &[PortMapping { host: 5173, container: 5173 }],
         workdir: &workdir,
         extra: &[],
+        toml_hash: None,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"/etc/foo:/etc/foo:ro".into()));
     assert!(args.contains(&"--publish".into()));
     assert!(args.contains(&"5173:5173".into()));
+}
+
+#[test]
+fn create_args_includes_toml_hash_label_when_set() {
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x",
+        image: "i:1",
+        volumes: &[],
+        env: &[],
+        network: "bridge",
+        ports: &[],
+        workdir: &workdir,
+        extra: &[],
+        toml_hash: Some("deadbeefcafef00d"),
+    };
+    let args = create_args(&spec);
+    assert!(args.contains(&"cs-toml-hash=deadbeefcafef00d".into()));
+}
+
+#[test]
+fn create_args_omits_toml_hash_label_when_none() {
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x",
+        image: "i:1",
+        volumes: &[],
+        env: &[],
+        network: "bridge",
+        ports: &[],
+        workdir: &workdir,
+        extra: &[],
+        toml_hash: None,
+    };
+    let args = create_args(&spec);
+    // No cs-toml-hash=... entry. The discovery label cs-managed=1 is
+    // still expected (that's unconditional).
+    assert!(!args.iter().any(|a| a.starts_with("cs-toml-hash=")));
+    assert!(args.contains(&"cs-managed=1".into()));
 }
 
 #[test]

@@ -9,6 +9,39 @@ use crate::mounts::{
 use crate::podman::args::{create_args, CreateSpec};
 use crate::podman::runner::Podman;
 
+/// Content-hash of `<project>/.claude-sandbox.toml` as a 16-hex-digit FNV-1a
+/// digest, or `None` if the project has no toml. Used to detect "the user
+/// edited the config since this container was created" so we can auto-
+/// recreate (mounts/env/labels/etc are baked at create time and won't
+/// otherwise pick up the change).
+pub fn toml_content_hash(project: &Path) -> Option<String> {
+    let path = project.join(".claude-sandbox.toml");
+    let bytes = std::fs::read(&path).ok()?;
+    Some(fnv1a_64_hex(&bytes))
+}
+
+fn fnv1a_64_hex(data: &[u8]) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", h)
+}
+
+/// Read a single label off an existing container via `podman inspect`.
+/// Returns `Ok(None)` if the label is absent or the inspect output is
+/// shaped unexpectedly (treat unknown labels as "no value" rather than
+/// blowing up — worst case we recreate once).
+fn container_label(podman: &Podman, name: &str, key: &str) -> Result<Option<String>> {
+    let v = podman.run_json(&crate::podman::args::inspect_args(name))?;
+    Ok(v.get("Config")
+        .and_then(|c| c.get("Labels"))
+        .and_then(|l| l.get(key))
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string()))
+}
+
 pub struct CreateOptions<'a> {
     pub name: &'a str,
     pub image: &'a str,
@@ -96,8 +129,27 @@ pub fn grant_acls(podman: &Podman, name: &str, project: &Path) -> Result<()> {
 }
 
 pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
+    let current_hash = toml_content_hash(opts.project_path);
     if podman.container_exists(opts.name)? {
-        return Ok(false);
+        // Compare the toml hash baked into the existing container's
+        // `cs-toml-hash` label to what's on disk now. If they match,
+        // the config hasn't changed since this container was created
+        // and we can keep using it. If they differ — or the label is
+        // absent (legacy container from before this feature) — recreate
+        // so the new mounts/env/ports take effect. The named home
+        // volume (`cs-<name>-home`) is NOT removed by `rm --volumes`,
+        // so the in-container `$HOME` survives the recreate.
+        let existing_hash = container_label(podman, opts.name, "cs-toml-hash")
+            .unwrap_or(None);
+        if existing_hash.as_deref() == current_hash.as_deref() {
+            return Ok(false);
+        }
+        eprintln!(
+            "claude-sandbox: .claude-sandbox.toml changed since container \
+             was created — recreating (named home volume survives)"
+        );
+        podman.run(&crate::podman::args::rm_args(opts.name))?;
+        let _ = crate::registry::remove(opts.name);
     }
     let mut volumes = default_volumes(opts.project_path, opts.name);
     volumes.extend(extra_volumes(opts.config, opts.project_path));
@@ -149,6 +201,7 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         ports: &ports,
         workdir: &workdir,
         extra: &gpu_extras,
+        toml_hash: current_hash.as_deref(),
     };
     podman.run(&create_args(&spec))?;
     let _ = crate::registry::upsert(opts.name, opts.project_path);

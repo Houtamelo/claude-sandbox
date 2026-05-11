@@ -12,6 +12,11 @@ pub struct CreateSpec<'a> {
     pub ports: &'a [PortMapping],
     pub workdir: &'a Path,
     pub extra: &'a [String],
+    /// Content hash of `.claude-sandbox.toml`. Stored as a container label
+    /// so a subsequent `claude-sandbox start` can detect that the config
+    /// has changed and trigger an automatic rm+recreate (named home
+    /// volume survives). `None` when the project has no toml.
+    pub toml_hash: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +48,10 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         "--label".into(),
         "cs-managed=1".into(),
     ];
+    if let Some(h) = spec.toml_hash {
+        v.push("--label".into());
+        v.push(format!("cs-toml-hash={h}"));
+    }
     for vol in spec.volumes {
         v.push("--volume".into());
         v.push(volume_arg(vol));

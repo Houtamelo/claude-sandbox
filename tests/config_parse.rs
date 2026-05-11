@@ -72,6 +72,15 @@ fn rejects_relative_mount_target() {
 }
 
 #[test]
+fn accepts_tilde_in_container_target() {
+    // Project bind-mounts at host absolute path, so HOME inside == HOME
+    // outside — `~/.foo` is unambiguous on both sides of a mount.
+    let tmp = write(r#"mount = [{ host = "~/.pulumi", container = "~/.pulumi" }]"#);
+    let c = load(&tmp.path().join("c.toml")).expect("should accept ~ in container");
+    assert_eq!(c.mount[0].container, "~/.pulumi");
+}
+
+#[test]
 fn rejects_bad_port() {
     let tmp = write("ports = [\"hello:world\"]\n");
     assert!(load(&tmp.path().join("c.toml")).is_err());

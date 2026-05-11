@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::error::{Error, Result};
+use crate::paths;
 
 use super::ConfigFile;
 
@@ -22,9 +23,14 @@ pub fn load_optional(path: &Path) -> Result<Option<ConfigFile>> {
 
 pub fn validate(cfg: &ConfigFile, path: &Path) -> Result<()> {
     for m in &cfg.mount {
-        if !std::path::Path::new(&m.container).is_absolute() {
+        // `~` and `$VAR` are accepted (and expanded at mount-build time)
+        // because the project is bind-mounted at the same path inside as
+        // outside — so `~/.foo` is unambiguous and the same on both sides.
+        let expanded = paths::expand(&m.container);
+        if !std::path::Path::new(&expanded).is_absolute() {
             return Err(Error::Config(format!(
-                "{}: mount.container '{}' must be absolute",
+                "{}: mount.container '{}' must be absolute \
+                 (after `~`/`$VAR` expansion)",
                 path.display(),
                 m.container
             )));

@@ -134,7 +134,7 @@ fn spec_to_volume(m: &MountSpec, project: &Path) -> Volume {
     };
     Volume::Bind(Mount {
         host,
-        container: PathBuf::from(&m.container),
+        container: PathBuf::from(paths::expand(&m.container)),
         ro: m.ro,
     })
 }

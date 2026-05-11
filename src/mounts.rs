@@ -19,24 +19,47 @@ pub enum Volume {
 /// The non-root user inside the container that Claude runs as.
 /// Must match the user created in the image's Dockerfile.
 pub const CONTAINER_USER: &str = "claude";
-pub const CONTAINER_HOME: &str = "/home/claude";
+
+/// In-container HOME path. Matches the host user's HOME so Claude Code's
+/// HOME-keyed setup-state cache (`~/.cache/claude-cli-nodejs/-<HOME->/`)
+/// can be located via a simple bind-mount.
+pub fn container_home() -> PathBuf {
+    paths::home()
+}
 
 pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume> {
     let home = paths::home();
+    let chome = container_home();
     let mut v = vec![
         Volume::Bind(Mount {
             host: project_path.to_path_buf(),
             container: PathBuf::from("/work"),
             ro: false,
         }),
+        // Persistent claude state (credentials, settings, projects, sessions).
         Volume::Bind(Mount {
             host: home.join(".claude"),
-            container: PathBuf::from(format!("{CONTAINER_HOME}/.claude")),
+            container: chome.join(".claude"),
             ro: false,
         }),
+        // Setup-state / onboarding cache; without this, claude treats every
+        // container session as first-run and re-prompts for theme + login.
+        // Create on host if absent so the bind-mount has something to point at.
+        Volume::Bind(Mount {
+            host: ensure_dir(home.join(".cache/claude-cli-nodejs")),
+            container: chome.join(".cache/claude-cli-nodejs"),
+            ro: false,
+        }),
+        Volume::Bind(Mount {
+            host: ensure_dir(home.join(".cache/claude")),
+            container: chome.join(".cache/claude"),
+            ro: false,
+        }),
+        // Named volume for everything else under HOME (apt installs at user
+        // level, shell history, claude binary install location, etc.).
         Volume::Named {
             name: format!("cs-{}-home", container_name),
-            container: PathBuf::from(CONTAINER_HOME),
+            container: chome.clone(),
             ro: false,
         },
     ];
@@ -44,11 +67,16 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
     if gitconfig.exists() {
         v.push(Volume::Bind(Mount {
             host: gitconfig,
-            container: PathBuf::from(format!("{CONTAINER_HOME}/.gitconfig")),
+            container: chome.join(".gitconfig"),
             ro: true,
         }));
     }
     v
+}
+
+fn ensure_dir(p: PathBuf) -> PathBuf {
+    let _ = std::fs::create_dir_all(&p);
+    p
 }
 
 pub fn extra_volumes(cfg: &ConfigFile, project: &Path) -> Vec<Volume> {

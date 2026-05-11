@@ -52,10 +52,11 @@ pub fn run_setup(
 /// non-fatal so a stale image without `acl` installed doesn't lock the
 /// user out — they can `claude-sandbox rebuild` to fix.
 pub fn grant_acls(podman: &Podman, name: &str) -> Result<()> {
+    let home = crate::mounts::container_home();
     let cmd = format!(
-        "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx /work {home}/.claude 2>/dev/null || true",
+        "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx /work {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null || true",
         user = crate::mounts::CONTAINER_USER,
-        home = crate::mounts::CONTAINER_HOME,
+        home = home.display(),
     );
     let args = crate::podman::args::exec_args_as(name, Some("0"), false, &["bash", "-c", &cmd]);
     let _ = podman.run(&args);

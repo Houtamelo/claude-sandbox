@@ -23,9 +23,13 @@ fn non_login_shell_preserves_claude_local_bin_in_path() {
     // Mirror what `start_in_worktree` produces: bash -c (no -l).
     let out = sb.podman_exec(&["bash", "-c", "echo $PATH"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
+    let expected = format!(
+        "{}/.local/bin",
+        claude_sandbox::mounts::container_home().display()
+    );
     assert!(
-        stdout.contains("/home/claude/.local/bin"),
-        "non-login bash dropped /home/claude/.local/bin from PATH. \
+        stdout.contains(&expected),
+        "non-login bash dropped {expected} from PATH. \
          If this fails the worktree-launch path will say \
          `claude: command not found`. got PATH: {}",
         stdout.trim()
@@ -64,7 +68,7 @@ fn claude_is_findable_via_the_actual_worktree_wrapper_shape() {
         "wrapper failed.\nstdout: {stdout}\nstderr: {stderr}",
     );
     assert!(
-        stdout.contains("/home/claude/.local/bin/claude") || stdout.trim().ends_with("/claude"),
+        stdout.trim().ends_with("/claude"),
         "wrapper didn't find claude. stdout: {}",
         stdout.trim()
     );

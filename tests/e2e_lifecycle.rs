@@ -64,15 +64,18 @@ fn container_has_default_mounts() {
                 || m["Target"].as_str() == Some(target)
         })
     };
+    let chome = claude_sandbox::mounts::container_home();
+    let chome_claude = chome.join(".claude").display().to_string();
+    let chome_str = chome.display().to_string();
     assert!(has_target("/work"), "missing /work bind. mounts: {:#?}", mounts);
     assert!(
-        has_target("/home/claude/.claude"),
-        "missing /home/claude/.claude bind. mounts: {:#?}",
+        has_target(&chome_claude),
+        "missing {chome_claude} bind. mounts: {:#?}",
         mounts
     );
     assert!(
-        has_target("/home/claude"),
-        "missing /home/claude named volume. mounts: {:#?}",
+        has_target(&chome_str),
+        "missing {chome_str} named volume. mounts: {:#?}",
         mounts
     );
 }

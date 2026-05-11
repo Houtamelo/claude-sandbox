@@ -10,10 +10,16 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     let bin_src = std::env::current_exe()?;
     let bin_dst = config_dir.join("claude-sandbox");
     std::fs::copy(&bin_src, &bin_dst)?;
+    // Pass the host's HOME so the image's `claude` user has a matching home
+    // path. Claude Code's setup-state cache is keyed by HOME — if the
+    // in-container HOME doesn't match, claude inside starts fresh every time.
+    let host_home = paths::home().display().to_string();
     let res = podman.run_inherit(&[
         "build".into(),
         "-t".into(),
         "claude-sandbox:0.1".into(),
+        "--build-arg".into(),
+        format!("HOSTHOME={host_home}"),
         "-f".into(),
         dockerfile.display().to_string(),
         config_dir.display().to_string(),

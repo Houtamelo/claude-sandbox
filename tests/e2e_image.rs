@@ -90,17 +90,22 @@ fn default_entrypoint_accepts_appended_commands() {
 
 #[test]
 fn home_local_bin_in_path() {
-    // Either claude lives somewhere global, or /home/claude/.local/bin is in PATH.
-    // We verify by echoing PATH and asserting it appears (which is the
-    // canonical fix for `claude_is_on_path_inside_image`).
+    // The claude binary lives at $HOME/.local/bin where $HOME matches the
+    // host user's HOME (so HOME-keyed caches like ~/.cache/claude-cli-nodejs
+    // line up across the bind-mount). PATH must include that location for
+    // non-login shells.
     if should_skip("home_local_bin_in_path") {
         return;
     }
     let out = run_in_image(&["echo \"$PATH\""]);
     let path = String::from_utf8_lossy(&out.stdout);
+    let expected = format!(
+        "{}/.local/bin",
+        claude_sandbox::mounts::container_home().display()
+    );
     assert!(
-        path.contains("/home/claude/.local/bin"),
-        "/home/claude/.local/bin not in image PATH (would break `claude` lookup). \
+        path.contains(&expected),
+        "{expected} not in image PATH (would break `claude` lookup). \
          got PATH: {}",
         path.trim()
     );

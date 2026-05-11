@@ -148,6 +148,17 @@ pub fn grant_acls(
             user = crate::mounts::CONTAINER_USER,
         ));
     }
+    // Symlink the baked sandbox-awareness doc into the user's HOME so
+    // Claude Code's parent-directory CLAUDE.md walk actually picks it up.
+    // The walk stops at $HOME (verified empirically); `/CLAUDE.md` sits
+    // above $HOME and is never loaded. `ln -sf` is idempotent so this is
+    // safe to re-run on every start, and it makes future image rebuilds
+    // (which update /CLAUDE.md in place) reach the agent without needing
+    // any per-container `down` + recreate.
+    cmd.push_str(&format!(
+        "[ -f /CLAUDE.md ] && ln -sf /CLAUDE.md {home}/CLAUDE.md 2>/dev/null; ",
+        home = home.display(),
+    ));
     cmd.push_str("true");
     let args = crate::podman::args::exec_args_as(name, Some("0"), false, &["bash", "-c", &cmd]);
     let _ = podman.run(&args);

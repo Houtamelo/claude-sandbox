@@ -235,11 +235,6 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         "CS_PROJECT_PATH".into(),
         opts.project_path.display().to_string(),
     ));
-    for k in crate::features::tailscale::passthrough_env(&opts.config.tailscale) {
-        if let Ok(v) = std::env::var(&k) {
-            env_pairs.push((k, v));
-        }
-    }
     if opts.config.ssh_agent.unwrap_or(true) {
         env::ensure_ssh_agent(&mut env_pairs, &mut volumes);
     }

@@ -28,9 +28,6 @@ pub struct ConfigFile {
     pub ports: Vec<String>,
 
     #[serde(default)]
-    pub tailscale: TailscaleSpec,
-
-    #[serde(default)]
     pub gpu: bool,
 
     #[serde(default)]
@@ -53,24 +50,6 @@ pub struct MountSpec {
     pub container: String,
     #[serde(default)]
     pub ro: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields, default)]
-pub struct TailscaleSpec {
-    pub enabled: bool,
-    pub hostname: Option<String>,
-    pub authkey_env: String,
-}
-
-impl Default for TailscaleSpec {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            hostname: None,
-            authkey_env: "TS_AUTHKEY".into(),
-        }
-    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -108,9 +87,6 @@ impl ConfigFile {
             self.network = other.network;
         }
         self.ports.extend(other.ports);
-        if other.tailscale.enabled {
-            self.tailscale = other.tailscale;
-        }
         if other.gpu {
             self.gpu = true;
         }

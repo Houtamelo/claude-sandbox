@@ -1,9 +1,7 @@
 # Default base; overridable via `--build-arg BASE_IMAGE=...` (set from
-# `[image] base` in machine.toml). Must be apt-based — the Tailscale
-# install layer below hardcodes a Debian-Trixie codename and `apt-get`
-# is assumed throughout. Non-Debian apt distros (Ubuntu, Mint) work for
-# everything else; the Tailscale layer will fail on them unless you
-# stay on `debian:trixie-slim`.
+# `[image] base` in machine.toml). Must be apt-based — the package
+# install step below uses `apt-get`. Non-Debian apt distros (Ubuntu,
+# Mint, etc.) work without modification.
 ARG BASE_IMAGE=debian:trixie-slim
 FROM ${BASE_IMAGE}
 
@@ -14,14 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config jq direnv acl \
       pulseaudio-utils sound-theme-freedesktop \
     && rm -rf /var/lib/apt/lists/*
-
-# Tailscale (from official repo).
-RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
-      -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
- && curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list \
-      -o /etc/apt/sources.list.d/tailscale.list \
- && apt-get update && apt-get install -y --no-install-recommends tailscale \
- && rm -rf /var/lib/apt/lists/*
 
 # Non-root user that Claude actually runs as. Claude refuses to honour
 # --dangerously-skip-permissions for any UID 0 process; the sandbox model

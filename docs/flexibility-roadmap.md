@@ -14,10 +14,11 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 | Input | Mechanism |
 |---|---|
 | Host UID | `[host] uid` in `~/.config/claude-sandbox/machine.toml`, captured by `claude-sandbox cfg`, plumbed through Dockerfile `ARG HOSTUID`. Auto-rebuild on change via `cs-machine-hash` label. |
-| Base image (`FROM`) | `[image] base` in `machine.toml`, default `debian:trixie-slim`. Templates Dockerfile `ARG BASE_IMAGE`. Must be apt-based; Tailscale layer is the only thing that breaks on non-Debian-Trixie bases. |
+| Base image (`FROM`) | `[image] base` in `machine.toml`, default `debian:trixie-slim`. Templates Dockerfile `ARG BASE_IMAGE`. Must be apt-based; any apt-based image now works since Tailscale was extracted. |
 | Claude auth (avoiding refresh-token rotation across shared `.credentials.json`) | Long-lived `CLAUDE_CODE_OAUTH_TOKEN` stored mode 600 at `~/.config/claude-sandbox/oauth_token`, validated against Anthropic's API at cfg-save AND container-start time, injected per-container. |
 | SELinux opt-out unconditional | Runtime-detected via `/sys/fs/selinux/enforce`. `--security-opt label=disable` only emitted when SELinux is actually loaded; absent on Ubuntu/Mint/vanilla Arch. |
 | GPU vendor (was NVIDIA-only) | `[gpu] vendor` in `machine.toml` — `none` (default), `nvidia`, `amd`, `intel`, or `custom`. cfg wizard probes (`/proc/driver/nvidia`, `/dev/kfd`, `/sys/class/drm/card0/device/vendor`) and pre-fills the prompt. `extra_args = [...]` is appended in every variant, including `none` and `custom`, as an escape hatch for driver-specific quirks. Per-project `gpu: bool` stays the toggle. |
+| Tailscale baked into image | Removed. Was a ~30 MB always-installed package with a Debian-Trixie codename hardcoded in the apt repo URL — penalised non-users and blocked alternate bases. Users who want it follow [docs/recipes/tailscale.md](recipes/tailscale.md) (install via `.claude-sandbox.deps.sh`, run via `on_start` hooks, persist state via `[[mount]]`). Existing tomls with `[tailscale]` get a clean `unknown field` parse error pointing at the recipe. |
 
 ---
 
@@ -28,10 +29,6 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 *(All items in this tier are now done. Next major friction point is in Significant.)*
 
 ### Significant (constrains real use cases)
-
-- **Tailscale install layer hardcodes Debian-Trixie codename.** `pkgs.tailscale.com/stable/debian/trixie.*` URLs in the Dockerfile. Breaks rebuilds on any non-Debian-Trixie base.
-  - *Proposal:* add `[image] with_tailscale: bool` (default true) — gates the entire install layer. Off-by-default skips it; users on alternate bases can disable it. Codename matching is option B / out of scope.
-  - *Scope:* ~30 min.
 
 - **Hardcoded apt package list.** `git sudo curl ca-certificates openssh-client build-essential pkg-config jq direnv acl pulseaudio-utils sound-theme-freedesktop` is one author's taste. No override.
   - *Proposal:* either trim to a minimum-viable set (`git sudo curl ca-certificates openssh-client acl`) and rely on per-project `setup = [...]` for the rest, OR expose `[image] extra_packages = [...]` build arg.

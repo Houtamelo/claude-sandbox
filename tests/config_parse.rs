@@ -18,7 +18,6 @@ fn parses_minimal() {
     assert_eq!(c.name.as_deref(), Some("x"));
     assert!(!c.agent_writable);
     assert!(c.mount.is_empty());
-    assert_eq!(c.tailscale.authkey_env, "TS_AUTHKEY");
 }
 
 #[test]
@@ -30,7 +29,7 @@ image = "claude-sandbox:0.1"
 mount = [
   { host = "~/.config/pulumi", container = "/root/.config/pulumi", ro = true },
 ]
-env_passthrough = ["TS_AUTHKEY"]
+env_passthrough = ["PULUMI_ACCESS_TOKEN"]
 env = { CARGO_TERM_COLOR = "always" }
 env_file = ".env"
 ssh_agent = false
@@ -40,10 +39,6 @@ gpu = true
 setup = ["apt-get install -y x"]
 worktree_setup = ["echo 1"]
 
-[tailscale]
-enabled = true
-hostname = "h"
-
 [limits]
 memory = "16g"
 cpus = 4
@@ -52,10 +47,29 @@ cpus = 4
     assert!(c.agent_writable);
     assert_eq!(c.mount.len(), 1);
     assert_eq!(c.mount[0].host, "~/.config/pulumi");
-    assert_eq!(c.tailscale.enabled, true);
     assert!(c.gpu);
     assert_eq!(c.limits.memory.as_deref(), Some("16g"));
     assert_eq!(c.limits.cpus, Some(4.0));
+}
+
+/// Guards the clean-break removal of the built-in Tailscale feature.
+/// Existing tomls with `[tailscale]` are intentionally broken; the
+/// recipe at docs/recipes/tailscale.md shows how to install it via
+/// .claude-sandbox.deps.sh + on_start hooks instead.
+#[test]
+fn rejects_legacy_tailscale_section() {
+    let tmp = write(r#"
+name = "p"
+
+[tailscale]
+enabled = true
+"#);
+    let e = load(&tmp.path().join("c.toml")).unwrap_err();
+    let msg = format!("{e}");
+    assert!(
+        msg.contains("tailscale") || msg.contains("unknown"),
+        "expected an unknown-field error mentioning `tailscale`; got: {msg}"
+    );
 }
 
 #[test]

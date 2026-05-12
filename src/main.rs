@@ -250,13 +250,7 @@ fn run_cfg_wizard() -> Result<()> {
         "    Base image: which OCI image the sandbox is built from. Must be apt-based"
     );
     println!(
-        "    (Debian / Ubuntu / Mint). The Tailscale install layer is hardcoded for"
-    );
-    println!(
-        "    Debian Trixie — non-Debian users may see `apt-get install tailscale` fail"
-    );
-    println!(
-        "    on rebuild; everything else works."
+        "    (Debian / Ubuntu / Mint). Other distros require editing assets/Dockerfile."
     );
     let base: String = Input::<String>::new()
         .with_prompt("base image")
@@ -630,20 +624,16 @@ fn prepare_container(
     // bind-mounted dirs. Cheap and safe to repeat every start.
     grant_acls(podman, &name, project, &cfg.mount)?;
 
-    let mut on_start_combined: Vec<String> =
-        claude_sandbox::features::tailscale::on_start_commands(&cfg.tailscale, &name);
-    on_start_combined.extend(cfg.on_start.iter().cloned());
-
-    if !on_start_combined.is_empty() {
+    if !cfg.on_start.is_empty() {
         claude_sandbox::step!(
             "Running on_start hooks ({} step(s))",
-            on_start_combined.len()
+            cfg.on_start.len()
         );
     }
     hooks::run(
         podman,
         &name,
-        &on_start_combined,
+        &cfg.on_start,
         &hooks::HookEnv {
             project_name: name.clone(),
             project_path: project.to_path_buf(),

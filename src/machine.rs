@@ -49,12 +49,10 @@ pub struct HostSpec {
 #[serde(deny_unknown_fields, default)]
 pub struct ImageSpec {
     /// The `FROM` line of the in-house Dockerfile, e.g. `debian:trixie-slim`
-    /// (default), `ubuntu:24.04`, `linuxmintd/mint22-amd64`. Currently
-    /// must be apt-based: the Dockerfile hardcodes `apt-get install …`
-    /// and a Debian-codename Tailscale repo. Non-Debian apt distros
-    /// (Ubuntu, Mint) work but the Tailscale install layer will fail
-    /// on rebuild — disable Tailscale or stay on Debian Trixie if you
-    /// need it baked into the image.
+    /// (default), `ubuntu:24.04`, `linuxmintd/mint22-amd64`. Must be
+    /// apt-based — the Dockerfile uses `apt-get install …` for the
+    /// in-image tool set. Other package managers require editing
+    /// `assets/Dockerfile` directly.
     pub base: String,
 }
 

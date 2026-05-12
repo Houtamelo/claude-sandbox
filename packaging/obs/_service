@@ -1,0 +1,28 @@
+<services>
+  <!--
+    OBS source service: fetch the latest annotated `v*` tag from GitHub,
+    produce a tarball whose embedded directory name matches the version
+    stripped of the `v` prefix (e.g. tag `v0.2.0` -> `claude-sandbox-0.2.0`).
+    Cargo's vendored `vendor/` and `.cargo/config.toml` must already be
+    committed to the tag (run `packaging/release.sh` locally before
+    pushing the tag) so the offline `cargo build --offline` in the spec
+    works without internet access on the OBS build farm.
+  -->
+  <service name="obs_scm" mode="disabled">
+    <param name="url">https://github.com/Houtamelo/claude-sandbox.git</param>
+    <param name="scm">git</param>
+    <param name="revision">main</param>
+    <param name="match-tag">v*</param>
+    <param name="versionformat">@PARENT_TAG@</param>
+    <param name="versionrewrite-pattern">v(.*)</param>
+    <param name="versionrewrite-replacement">\1</param>
+    <param name="filename">claude-sandbox</param>
+    <param name="exclude">.git</param>
+  </service>
+  <service name="tar" mode="buildtime"/>
+  <service name="recompress" mode="buildtime">
+    <param name="file">*.tar</param>
+    <param name="compression">gz</param>
+  </service>
+  <service name="set_version" mode="buildtime"/>
+</services>

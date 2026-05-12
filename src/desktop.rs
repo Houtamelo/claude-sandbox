@@ -37,17 +37,43 @@ pub fn detect() -> Desktop {
     }
 }
 
-/// Where the Dolphin servicemenu .desktop file lives on a typical
-/// Plasma 6 install. KF6 (Plasma 6) reads from this path; older KF5
-/// used `~/.local/share/kservices5/ServiceMenus/` but Plasma 6 has
-/// been out long enough that we target the newer path only.
-pub fn kde_servicemenu_path() -> PathBuf {
+/// Where the Dolphin servicemenu .desktop file lives in the user-local
+/// XDG data dir. KF6 (Plasma 6) reads from this path; older KF5 used
+/// `~/.local/share/kservices5/ServiceMenus/` but Plasma 6 has been out
+/// long enough that we target the newer path only.
+pub fn kde_servicemenu_user_path() -> PathBuf {
     paths::home()
         .join(".local/share/kio/servicemenus/open-in-claude-sandbox.desktop")
 }
 
+/// Where a distro package drops the servicemenu system-wide. Override
+/// via `CS_SYSTEM_KIO_SERVICEMENUS_DIR` for tests; production default is
+/// the FHS-canonical KIO path.
+pub fn kde_servicemenu_system_path() -> PathBuf {
+    let dir = match std::env::var_os("CS_SYSTEM_KIO_SERVICEMENUS_DIR") {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => PathBuf::from("/usr/share/kio/servicemenus"),
+    };
+    dir.join("open-in-claude-sandbox.desktop")
+}
+
+/// `Some(path)` of the actual install when the servicemenu is present
+/// either user-locally or system-wide, `None` otherwise. User-local wins
+/// when both exist (user overrides system per KDE precedence).
+pub fn kde_servicemenu_installed_at() -> Option<PathBuf> {
+    let user = kde_servicemenu_user_path();
+    if user.exists() {
+        return Some(user);
+    }
+    let sys = kde_servicemenu_system_path();
+    if sys.exists() {
+        return Some(sys);
+    }
+    None
+}
+
 pub fn kde_servicemenu_installed() -> bool {
-    kde_servicemenu_path().exists()
+    kde_servicemenu_installed_at().is_some()
 }
 
 /// Install the bundled .desktop entry into the KDE servicemenu dir.
@@ -57,7 +83,7 @@ pub fn kde_servicemenu_installed() -> bool {
 pub fn install_kde_servicemenu() -> std::io::Result<PathBuf> {
     const DESKTOP_ENTRY: &str =
         include_str!("../assets/dolphin/open-in-claude-sandbox.desktop");
-    let dest = kde_servicemenu_path();
+    let dest = kde_servicemenu_user_path();
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }

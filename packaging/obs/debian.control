@@ -1,0 +1,34 @@
+Source: claude-sandbox
+Section: utils
+Priority: optional
+Maintainer: Houtamelo <houtamelo@users.noreply.github.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo (>= 1.84),
+ rustc (>= 1.84),
+Standards-Version: 4.6.2
+Homepage: https://github.com/Houtamelo/claude-sandbox
+Vcs-Browser: https://github.com/Houtamelo/claude-sandbox
+Vcs-Git: https://github.com/Houtamelo/claude-sandbox.git
+Rules-Requires-Root: no
+
+Package: claude-sandbox
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ podman,
+ fuse-overlayfs,
+Recommends:
+ crun,
+ acl,
+Description: Run Claude Code in a rootless-Podman per-project sandbox
+ claude-sandbox runs Claude Code in a rootless-Podman per-project sandbox.
+ Inside, Claude has full passwordless sudo and apt-install privileges;
+ the host system is structurally protected by Podman's user-namespace
+ isolation.
+ .
+ One sandbox container per project, with auto-rebuild on configuration
+ changes, GPU passthrough, OAuth-token-based authentication (avoids
+ `.credentials.json` refresh-token collisions on shared hosts), and a
+ host-side KDE Dolphin "Open in claude-sandbox" context-menu entry.

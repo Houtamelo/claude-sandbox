@@ -1,0 +1,9 @@
+claude-sandbox (0.2.0-0) unstable; urgency=medium
+
+  * First OBS-packaged release.
+  * FHS layout: binary in /usr/bin, assets in /usr/share/claude-sandbox,
+    KDE servicemenu in /usr/share/kio/servicemenus.
+  * Three-tier runtime asset lookup (~/.config -> /usr/share -> embedded)
+    so users can edit Dockerfile/config.toml without breaking the package.
+
+ -- Houtamelo <houtamelo@users.noreply.github.com>  Tue, 12 May 2026 12:00:00 +0000

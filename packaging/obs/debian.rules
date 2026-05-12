@@ -1,0 +1,41 @@
+#!/usr/bin/make -f
+
+# Force cargo offline. The vendor/ dir is tarballed alongside the source
+# by packaging/release.sh and committed at the tagged release.
+export CARGO_HOME = $(CURDIR)/.cargo-home
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	mkdir -p .cargo
+	printf '%s\n' \
+	  '[source.crates-io]' \
+	  'replace-with = "vendored-sources"' \
+	  '' \
+	  '[source.vendored-sources]' \
+	  'directory = "vendor"' \
+	  > .cargo/config.toml
+
+override_dh_auto_build:
+	cargo build --release --offline --frozen
+
+override_dh_auto_test:
+	# Tests need a writable HOME tempdir + (for e2e) a working podman.
+	# Both are unreliable inside obs-build chroots, so skip; CI on the
+	# project's GitHub Actions covers them.
+
+override_dh_auto_install:
+	install -Dm755 target/release/claude-sandbox \
+	  debian/claude-sandbox/usr/bin/claude-sandbox
+	install -Dm644 assets/Dockerfile \
+	  debian/claude-sandbox/usr/share/claude-sandbox/Dockerfile
+	install -Dm644 assets/default-config.toml \
+	  debian/claude-sandbox/usr/share/claude-sandbox/config.toml
+	install -Dm644 assets/CLAUDE.md \
+	  debian/claude-sandbox/usr/share/claude-sandbox/CLAUDE.md
+	install -Dm755 assets/dolphin/open-in-claude-sandbox.desktop \
+	  debian/claude-sandbox/usr/share/kio/servicemenus/open-in-claude-sandbox.desktop
+
+override_dh_auto_clean:
+	rm -rf target .cargo-home .cargo/config.toml

@@ -501,10 +501,10 @@ fn run_cfg_desktop_step() -> Result<()> {
 
     match desktop::detect() {
         Desktop::Kde => {
-            if desktop::kde_servicemenu_installed() {
+            if let Some(at) = desktop::kde_servicemenu_installed_at() {
                 println!(
                     "==> Dolphin context menu already installed at {} — skipping.",
-                    desktop::kde_servicemenu_path().display()
+                    at.display()
                 );
                 return Ok(());
             }

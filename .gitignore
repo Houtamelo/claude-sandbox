@@ -1,3 +1,9 @@
 /target
 **/*.rs.bk
 Cargo.lock.bak
+
+# `packaging/release.sh` generates these and cleans them up at the end;
+# committing them would balloon the repo (vendor/ alone is tens of MB).
+/vendor
+/.cargo
+/packaging/obs/*.tar.gz

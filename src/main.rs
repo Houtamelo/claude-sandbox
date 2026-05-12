@@ -289,6 +289,27 @@ fn run_cfg_wizard() -> Result<()> {
                     .into(),
             ));
         }
+        // Validate against Anthropic's API BEFORE saving — catches typos,
+        // wrong tokens, and revoked tokens at the point the user pastes
+        // them, instead of waiting until container start to surface the
+        // problem. Network failures are demoted to a warning so an
+        // offline laptop doesn't block the user from saving.
+        println!("Validating token with Anthropic...");
+        match machine::validate_oauth_token(trimmed) {
+            machine::TokenValidation::Valid => {}
+            machine::TokenValidation::Invalid { detail } => {
+                return Err(claude_sandbox::error::Error::Other(format!(
+                    "token rejected: {detail}. Generate a fresh one with \
+                     `claude setup-token` and re-run `claude-sandbox cfg`."
+                )));
+            }
+            machine::TokenValidation::Unknown { reason } => {
+                eprintln!(
+                    "[warn] couldn't verify token with Anthropic ({reason}). \
+                     Saving anyway; container start will re-validate."
+                );
+            }
+        }
         let prev_hash = machine::oauth_token_hash();
         machine::save_oauth_token(trimmed)?;
         let new_hash = machine::oauth_token_hash();
@@ -466,6 +487,29 @@ fn prepare_container(
     // for auth). Hash always exists — empty-file sentinel covers absent.
     let oauth_token = claude_sandbox::machine::load_oauth_token()?;
     let current_oauth_hash = claude_sandbox::machine::oauth_token_hash();
+
+    // If a token IS configured, verify it's still accepted by Anthropic
+    // before we inject it into the container. Catches revocations / typos
+    // upstream of the container's own auth failure. Unknown = network
+    // issue → warn and proceed (we don't want to lock the user out of
+    // their sandbox because Anthropic is having a 5xx moment).
+    if let Some(tok) = oauth_token.as_deref() {
+        claude_sandbox::step!("Validating OAuth token");
+        match claude_sandbox::machine::validate_oauth_token(tok) {
+            claude_sandbox::machine::TokenValidation::Valid => {}
+            claude_sandbox::machine::TokenValidation::Invalid { detail } => {
+                return Err(claude_sandbox::error::Error::Other(format!(
+                    "OAuth token rejected by Anthropic ({detail}). \
+                     Run `claude-sandbox cfg` to provide a fresh token."
+                )));
+            }
+            claude_sandbox::machine::TokenValidation::Unknown { reason } => {
+                eprintln!(
+                    "[warn] couldn't verify OAuth token with Anthropic ({reason}); proceeding."
+                );
+            }
+        }
+    }
 
     let reg = claude_sandbox::registry::load()?;
     let resolved = match reg.entries.get(&name) {

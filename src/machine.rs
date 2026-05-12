@@ -162,6 +162,73 @@ pub fn save_oauth_token(token: &str) -> Result<()> {
     Ok(())
 }
 
+/// Result of probing Anthropic's API to verify the OAuth token. Three
+/// states because network failures are real and we don't want to brick
+/// the user's workflow just because they're temporarily offline:
+///   - `Valid`  → API accepted the token (HTTP != 401/403).
+///   - `Invalid` → API rejected it (HTTP 401/403 with auth error).
+///     User must re-run `claude-sandbox cfg`.
+///   - `Unknown` → network failure or 5xx; couldn't determine. Caller
+///     decides whether to warn-and-proceed or block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenValidation {
+    Valid,
+    Invalid { detail: String },
+    Unknown { reason: String },
+}
+
+/// Convert the (curl-exit, HTTP-code-string) pair to a validation result.
+/// Split out for unit-testing without making real network calls.
+pub fn parse_validation(curl_exit_ok: bool, http_code: &str) -> TokenValidation {
+    let code = http_code.trim();
+    if !curl_exit_ok && code == "000" {
+        return TokenValidation::Unknown { reason: "network unreachable / timeout".into() };
+    }
+    match code {
+        "401" | "403" => TokenValidation::Invalid {
+            detail: format!("Anthropic API returned HTTP {code}"),
+        },
+        "000" => TokenValidation::Unknown { reason: "network unreachable / timeout".into() },
+        c if c.starts_with('5') => TokenValidation::Unknown {
+            reason: format!("HTTP {c} from Anthropic (likely an outage on their side)"),
+        },
+        // Any other 2xx/3xx/4xx (e.g. 200 / 400 / 422) means auth passed —
+        // the request body failed validation, which is fine; we only
+        // care about the auth verdict.
+        c if !c.is_empty() => TokenValidation::Valid,
+        _ => TokenValidation::Unknown { reason: "curl produced no HTTP status".into() },
+    }
+}
+
+/// Probe Anthropic's API with the given token to determine whether it's
+/// still accepted. Uses `POST /v1/messages/count_tokens` with no body —
+/// auth is checked before body validation, so an empty body yields:
+///   - 401 → revoked or wrong token
+///   - 400 / 422 → auth ok, body missing (we treat this as Valid)
+///
+/// Shells to `curl` (a host prereq), times out after 5s. Falls back to
+/// `Unknown` on any transport failure so a flaky network doesn't lock
+/// the user out of their own sandbox.
+pub fn validate_oauth_token(token: &str) -> TokenValidation {
+    let auth = format!("Authorization: Bearer {}", token);
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s", "-o", "/dev/null", "-m", "5",
+            "-w", "%{http_code}",
+            "-X", "POST",
+            "-H", &auth,
+            "-H", "anthropic-version: 2023-06-01",
+            "https://api.anthropic.com/v1/messages/count_tokens",
+        ])
+        .output();
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => return TokenValidation::Unknown { reason: format!("curl invocation failed: {e}") },
+    };
+    let http_code = String::from_utf8_lossy(&output.stdout);
+    parse_validation(output.status.success(), &http_code)
+}
+
 /// Content hash of the oauth-token file. Used as a separate container
 /// label (`cs-oauth-hash`) so token rotation triggers a container
 /// recreate (env vars are baked at create time) WITHOUT triggering an

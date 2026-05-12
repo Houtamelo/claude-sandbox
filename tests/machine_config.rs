@@ -1,10 +1,11 @@
-use claude_sandbox::machine::{content_hash, GpuSpec, HostSpec, ImageSpec, MachineConfig};
+use claude_sandbox::machine::{content_hash, ClaudeSpec, GpuSpec, HostSpec, ImageSpec, MachineConfig};
 
 fn cfg(uid: u32) -> MachineConfig {
     MachineConfig {
         host: HostSpec { uid },
         image: ImageSpec::default(),
         gpu: GpuSpec::default(),
+        claude: ClaudeSpec::default(),
     }
 }
 
@@ -96,6 +97,46 @@ fn legacy_image_section_without_extra_packages_keeps_default() {
     let body = "[host]\nuid = 1000\n[image]\nbase = \"debian:trixie-slim\"\n";
     let c: MachineConfig = toml::from_str(body).expect("parse");
     assert_eq!(c.image.extra_packages, ImageSpec::default().extra_packages);
+}
+
+#[test]
+fn default_claude_flags_is_dangerously_skip() {
+    // Guards the safety baseline. Users can override (per-project or by
+    // editing machine.toml) but the OOTB default must keep the flag on.
+    let s = claude_sandbox::machine::ClaudeSpec::default();
+    assert_eq!(s.flags, vec!["--dangerously-skip-permissions"]);
+}
+
+#[test]
+fn legacy_toml_without_claude_section_keeps_default() {
+    let body = "[host]\nuid = 1000\n";
+    let c: MachineConfig = toml::from_str(body).expect("parse");
+    assert_eq!(c.claude, claude_sandbox::machine::ClaudeSpec::default());
+}
+
+#[test]
+fn claude_flags_can_be_extended() {
+    let body = r#"
+[host]
+uid = 1000
+[claude]
+flags = ["--dangerously-skip-permissions", "--model", "claude-opus-4-7"]
+"#;
+    let c: MachineConfig = toml::from_str(body).expect("parse");
+    assert_eq!(
+        c.claude.flags,
+        vec!["--dangerously-skip-permissions", "--model", "claude-opus-4-7"]
+    );
+}
+
+#[test]
+fn claude_flags_can_be_emptied() {
+    // Empty list = user explicitly wants no flags (e.g. they want
+    // the in-app permission UX back). The wizard supports this via
+    // a blank input.
+    let body = "[host]\nuid = 1000\n[claude]\nflags = []\n";
+    let c: MachineConfig = toml::from_str(body).expect("parse");
+    assert!(c.claude.flags.is_empty());
 }
 
 #[test]

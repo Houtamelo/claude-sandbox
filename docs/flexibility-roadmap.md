@@ -21,6 +21,8 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 | Tailscale baked into image | Removed. Was a ~30 MB always-installed package with a Debian-Trixie codename hardcoded in the apt repo URL — penalised non-users and blocked alternate bases. Users who want it follow [docs/recipes/tailscale.md](recipes/tailscale.md) (install via `.claude-sandbox.deps.sh`, run via `on_start` hooks, persist state via `[[mount]]`). Existing tomls with `[tailscale]` get a clean `unknown field` parse error pointing at the recipe. |
 | Hardcoded apt package list | Split into two tiers. **Core** (`ca-certificates curl git sudo bash openssh-client acl pulseaudio-utils sound-theme-freedesktop gnupg`) is fixed in the Dockerfile — these are load-bearing for sandbox features (TLS, claude.ai installer, worktrees, sudo, hooks, SSH/GPG agent forwarding, ACLs, notification audio). **Extras** (`[image] extra_packages` in machine.toml, default = `build-essential pkg-config jq direnv`) is user-configurable via cfg wizard or direct edit. `extra_packages = []` skips the second RUN entirely for a minimal image. |
 | SSH-key-only credential passthrough | Added `gpg_agent: bool` to per-project `.claude-sandbox.toml` (default false). When true and host `~/.gnupg/` exists, bind-mounts the directory rw at the matching in-container path. HOME mirroring means gpg auto-discovers its keyring + agent socket; signing / encryption / decryption all work. Exposes the keyring to the container (consistent with how `~/.claude` is treated). |
+| `CLAUDE_FLAGS` hardcoded | `[claude] flags = [...]` in `machine.toml` (default `["--dangerously-skip-permissions"]` — fine inside the sandbox; the cfg wizard explains why). Per-project `claude_flags = [...]` in `.claude-sandbox.toml` fully replaces the machine-wide list (not appends — replacing means "use exactly these"; appending would force users to repeat the dangerous-skip baseline). The in-container `cs goal` reads from a `CS_CLAUDE_FLAGS` env var baked at container create so it uses the same flag set. |
+| Dolphin servicemenu hardcodes konsole | Wizard detects `$XDG_CURRENT_DESKTOP`. KDE → prompt-and-install the servicemenu (skipping if already installed). Other DEs → message pointing at [docs/recipes/context-menu.md](recipes/context-menu.md) which covers GNOME (Nautilus scripts), XFCE (Thunar custom actions), Cinnamon (Nemo actions), MATE (Caja scripts), and minimal-WM aliases. Only KDE is auto-installed because there's no portable cross-DE ABI. |
 
 ---
 
@@ -32,25 +34,18 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 
 ### Significant (constrains real use cases)
 
+*(Empty. All Significant-tier items shipped.)*
+
 ### Minor (preference / convenience)
 
-- **`CLAUDE_FLAGS = ["--dangerously-skip-permissions"]` hardcoded.** Some users may want the prompt UX or to pass `--allowedTools`/`--model`.
-  - *Proposal:* `claude_flags = ["..."]` in per-project toml, merged with the safety default rather than replacing it (or a `safe_mode = true` to drop the dangerous-skip).
-  - *Scope:* ~20 min.
-
-- **Container user name `claude` is hardcoded** (`mounts.rs::CONTAINER_USER`, Dockerfile, ACL commands). Doesn't collide with anything in practice but is opinionated.
-  - *Proposal:* parameterize via build-arg `CONTAINER_USER=claude`. Purely cosmetic.
-  - *Scope:* ~20 min.
-
-- **Dolphin servicemenu uses `konsole`.** Not portable to other terminals.
-  - *Proposal:* document the `Exec=` edit for other terminals; or detect $TERMINAL. Already optional via `make install-dolphin-menu`.
-  - *Scope:* doc-only.
+*(Empty. The pass is done.)*
 
 ---
 
-## 🤔 Deferred (intentionally out of scope)
+## 🤔 Deferred / intentionally not configurable
 
-- **Cross-distro support (Fedora / Arch / Alpine).** Would require branching every apt-step on package manager (apt/dnf/pacman/apk), per-distro Tailscale repo URLs, sudo group differences, useradd flag differences. Real maintenance burden. The current "apt-based only" stance covers Debian/Ubuntu/Mint, which is the bulk of Linux dev hosts.
+- **Container user name `claude`** (`mounts.rs::CONTAINER_USER`, Dockerfile useradd, sudoers file naming, `grant_acls` setfacl commands). Purely internal — users don't type it, don't see it in any output unless they `whoami` inside the container, doesn't appear in any user-facing config. Parameterizing would touch the Dockerfile (new ARG), `grant_acls` (thread through five+ string interpolations), the constant, several tests, and the `cs goal` ACL code path for zero functional benefit. The name is opinionated but fixed.
+- **Cross-distro support (Fedora / Arch / Alpine).** Would require branching every apt-step on package manager (apt/dnf/pacman/apk), per-distro sudo group differences, useradd flag differences. Real maintenance burden. The current "apt-based only" stance covers Debian/Ubuntu/Mint, which is the bulk of Linux dev hosts. Users on other distros can edit `assets/Dockerfile` directly.
 - **macOS / Windows support.** Linux-only by design (rootless Podman + userns).
 - **Docker support.** Not blocked — most things work via `podman → docker` aliasing — but no explicit testing or compatibility shims.
 - **Multi-user containers.** Project-per-container is the mental model; sharing one big container across many projects is a different product.

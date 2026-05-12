@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod container;
+pub mod desktop;
 pub mod env;
 pub mod error;
 pub mod features;

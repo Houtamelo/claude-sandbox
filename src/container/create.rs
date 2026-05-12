@@ -248,6 +248,18 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     if let Some(token) = opts.oauth_token {
         env_pairs.push(("CLAUDE_CODE_OAUTH_TOKEN".into(), token.to_string()));
     }
+    // Pass the resolved claude flags via env so the in-container `cs goal`
+    // shortcut uses the same flag set as the host-side `claude-sandbox goal`.
+    // Resolution mirrors resolve_claude_flags in main.rs: per-project
+    // `claude_flags` (full override) > machine.toml `[claude] flags` >
+    // the dangerous-skip baseline.
+    let claude_flags: Vec<String> = opts
+        .config
+        .claude_flags
+        .clone()
+        .or_else(|| opts.machine_cfg.map(|m| m.claude.flags.clone()))
+        .unwrap_or_else(|| vec!["--dangerously-skip-permissions".into()]);
+    env_pairs.push(("CS_CLAUDE_FLAGS".into(), claude_flags.join(" ")));
 
     assert_no_target_collisions(&volumes)?;
 

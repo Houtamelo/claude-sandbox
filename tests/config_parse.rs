@@ -62,6 +62,40 @@ fn gpg_agent_defaults_to_none_meaning_off() {
 }
 
 #[test]
+fn claude_flags_default_to_none_meaning_inherit_machine() {
+    let tmp = write("name = \"x\"\n");
+    let c = load(&tmp.path().join("c.toml")).unwrap();
+    assert_eq!(c.claude_flags, None);
+}
+
+#[test]
+fn claude_flags_per_project_full_override() {
+    // Per-project list REPLACES the machine-wide setting wholesale —
+    // append semantics would force users to repeat the dangerous-skip
+    // baseline every time they wanted a project-specific extra flag.
+    // Confirmed via merge_in's `is_some()` override pattern.
+    let tmp = write(r#"
+name = "x"
+claude_flags = ["--allowedTools", "Bash,Read,Edit"]
+"#);
+    let c = load(&tmp.path().join("c.toml")).unwrap();
+    assert_eq!(
+        c.claude_flags,
+        Some(vec!["--allowedTools".into(), "Bash,Read,Edit".into()])
+    );
+}
+
+#[test]
+fn claude_flags_can_be_explicit_empty() {
+    // Empty list ≠ None. None means "fall through to machine.toml";
+    // Some([]) means "no flags at all" (e.g. user wants the in-app
+    // permission UX back for this specific project).
+    let tmp = write("name = \"x\"\nclaude_flags = []\n");
+    let c = load(&tmp.path().join("c.toml")).unwrap();
+    assert_eq!(c.claude_flags, Some(vec![]));
+}
+
+#[test]
 fn gpg_agent_can_be_explicit() {
     let tmp = write("name = \"x\"\ngpg_agent = true\n");
     let c = load(&tmp.path().join("c.toml")).unwrap();

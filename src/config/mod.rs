@@ -29,6 +29,12 @@ pub struct ConfigFile {
     /// the container. Set `gpg_agent = true` to enable for projects
     /// that sign commits / encrypt artefacts.
     pub gpg_agent: Option<bool>,
+    /// Override the machine-wide `[claude] flags` from `machine.toml`.
+    /// `None` (the default) means "use the machine setting". `Some([..])`
+    /// REPLACES the machine setting entirely — if you want the
+    /// `--dangerously-skip-permissions` default plus extra flags, list
+    /// it explicitly: `claude_flags = ["--dangerously-skip-permissions", "--model", "..."]`.
+    pub claude_flags: Option<Vec<String>>,
     pub network: Option<String>,
     #[serde(default)]
     pub ports: Vec<String>,
@@ -91,6 +97,14 @@ impl ConfigFile {
         }
         if other.gpg_agent.is_some() {
             self.gpg_agent = other.gpg_agent;
+        }
+        // `claude_flags` is full-replace, not append: setting it
+        // per-project means "use exactly this list", overriding the
+        // machine default. Append semantics would force users to spell
+        // out the `--dangerously-skip-permissions` baseline every time
+        // they wanted to add one extra flag.
+        if other.claude_flags.is_some() {
+            self.claude_flags = other.claude_flags;
         }
         if other.network.is_some() {
             self.network = other.network;

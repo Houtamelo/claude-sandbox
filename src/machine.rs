@@ -34,6 +34,13 @@ pub struct MachineConfig {
     /// behavior they didn't ask for.
     #[serde(default)]
     pub gpu: GpuSpec,
+    /// Default flags passed to every `claude` invocation. Default
+    /// `["--dangerously-skip-permissions"]` because the container IS
+    /// the safety boundary — letting claude prompt for permission to
+    /// run a command inside the sandbox is pure friction. Per-project
+    /// `.claude-sandbox.toml` can override the list entirely.
+    #[serde(default)]
+    pub claude: ClaudeSpec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,6 +80,32 @@ impl Default for ImageSpec {
                 "jq".into(),
                 "direnv".into(),
             ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, default)]
+pub struct ClaudeSpec {
+    /// Flags spliced into every `claude` invocation. The default is
+    /// `["--dangerously-skip-permissions"]` — that flag is normally a
+    /// red flag (gives Claude unfettered command execution on the
+    /// host) but inside a rootless-Podman sandbox the container itself
+    /// is the boundary: anything Claude does is confined to the writable
+    /// layer + bind-mounted dirs, can't escape userns, can't touch host
+    /// system files. Bypassing the in-app permission prompts is pure
+    /// ergonomics with no real safety loss.
+    ///
+    /// Append other flags you want on by default (e.g. `--model
+    /// claude-opus-4-7`). Set to `[]` to remove the dangerous-skip
+    /// default if you specifically want the in-app prompt UX back.
+    pub flags: Vec<String>,
+}
+
+impl Default for ClaudeSpec {
+    fn default() -> Self {
+        Self {
+            flags: vec!["--dangerously-skip-permissions".into()],
         }
     }
 }

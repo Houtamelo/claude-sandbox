@@ -64,21 +64,24 @@ fn claude_accepts_dangerously_skip_as_nonroot() {
     );
 }
 
-/// Verify the binary's source spec — the CLAUDE_FLAGS constant must
-/// contain the flag. Lightweight string-level check on main.rs so
-/// removing the flag without updating tests is caught.
+/// Guards the safety baseline: the default `claude_flags` in
+/// `machine.toml`'s `[claude]` section must contain
+/// `--dangerously-skip-permissions`. Users can still override
+/// (per-project or by editing machine.toml), but the OUT-OF-THE-BOX
+/// default ships with the dangerous-skip-permissions flag on because
+/// the container is the safety boundary and in-app prompts defeat the
+/// sandbox's purpose. Catches accidental defaults flips.
 #[test]
-fn main_rs_declares_dangerously_skip_permissions() {
-    let main_rs = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
-    )
-    .expect("read src/main.rs");
+fn default_claude_flags_contains_dangerously_skip() {
+    let default = claude_sandbox::machine::ClaudeSpec::default();
     assert!(
-        main_rs.contains("CLAUDE_FLAGS")
-            && main_rs.contains("--dangerously-skip-permissions"),
-        "src/main.rs missing the --dangerously-skip-permissions flag declaration. \
-         The container is the safety boundary; in-app permission prompts defeat \
-         the sandbox's purpose."
+        default
+            .flags
+            .iter()
+            .any(|f| f == "--dangerously-skip-permissions"),
+        "default ClaudeSpec.flags must contain `--dangerously-skip-permissions`; \
+         got {:?}",
+        default.flags
     );
 }
 

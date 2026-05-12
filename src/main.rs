@@ -13,15 +13,26 @@ use claude_sandbox::logging;
 
 const DEFAULT_IMAGE: &str = "claude-sandbox:0.1";
 
-/// The point of the sandbox is to let claude run with no permission
-/// prompts — the container is the safety boundary, not the prompt UI.
-/// Passed on every `claude` invocation; ignored for `bash` (shell) launches.
-const CLAUDE_FLAGS: &[&str] = &["--dangerously-skip-permissions"];
-
 fn load_cfg(project: &std::path::Path) -> Result<ConfigFile> {
     let toml_path = project.join(".claude-sandbox.toml");
     let global = paths::config_dir().join("config.toml");
     load_merged(Some(&global), if toml_path.exists() { Some(&toml_path) } else { None })
+}
+
+/// Resolve the effective `claude` flags for this launch. Per-project
+/// `claude_flags` (if set) fully replaces the machine-wide default
+/// from `machine.toml [claude] flags`. The machine default itself is
+/// `["--dangerously-skip-permissions"]` — fine inside the sandbox
+/// because the container is the safety boundary; bypassing the
+/// in-app permission UI is pure ergonomics.
+fn resolve_claude_flags(
+    project_cfg: &ConfigFile,
+    machine_cfg: &claude_sandbox::machine::MachineConfig,
+) -> Vec<String> {
+    project_cfg
+        .claude_flags
+        .clone()
+        .unwrap_or_else(|| machine_cfg.claude.flags.clone())
 }
 
 fn main() -> ExitCode {
@@ -218,7 +229,7 @@ fn run_host() -> Result<()> {
 /// (SELinux, GPU vendor, image base, …).
 fn run_cfg_wizard() -> Result<()> {
     use claude_sandbox::features::gpu::{self as gpu_feat, GpuVendor};
-    use claude_sandbox::machine::{self, GpuSpec, HostSpec, ImageSpec, MachineConfig};
+    use claude_sandbox::machine::{self, ClaudeSpec, GpuSpec, HostSpec, ImageSpec, MachineConfig};
     use dialoguer::{Confirm, Input, Password};
 
     let existing = if machine::exists() { machine::load().ok() } else { None };
@@ -329,10 +340,48 @@ fn run_cfg_wizard() -> Result<()> {
         );
     }
 
+    // ---- Default flags passed to `claude` on every launch ----
+    //
+    // The default is `--dangerously-skip-permissions`. That flag name
+    // sounds scary on purpose — outside of containerised contexts,
+    // letting claude run shell commands without prompts is a real risk.
+    // INSIDE the rootless-Podman sandbox, the container itself is the
+    // safety boundary: anything claude does is confined to the writable
+    // layer + the bind-mounted dirs you opted into; it can't escape the
+    // user namespace; sudo elevates only within the container; the host's
+    // filesystem, packages, and other processes are unreachable. The
+    // in-app permission prompts add friction without adding safety.
+    //
+    // You can append extra flags (e.g. `--model claude-opus-4-7`,
+    // `--allowedTools Bash,Read,Edit`) or remove `--dangerously-skip-permissions`
+    // entirely if you specifically want the in-app prompt UX back. The
+    // list applies to `claude-sandbox` and `claude-sandbox goal`; per-project
+    // `.claude-sandbox.toml` can override the list entirely.
+    let default_claude_flags: Vec<String> = existing
+        .as_ref()
+        .map(|c| c.claude.flags.clone())
+        .unwrap_or_else(|| ClaudeSpec::default().flags);
+    println!();
+    println!("    claude flags: passed to every `claude` invocation. Default");
+    println!("    `--dangerously-skip-permissions` is fine inside the sandbox");
+    println!("    (the container is the safety boundary; in-app prompts add");
+    println!("    friction without protection). Space-separated; blank = none.");
+    let raw_flags: String = Input::<String>::new()
+        .with_prompt("claude flags")
+        .default(default_claude_flags.join(" "))
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+    let claude_flags: Vec<String> = raw_flags
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+
     let new_cfg = MachineConfig {
         host: HostSpec { uid },
         image: ImageSpec { base, extra_packages },
         gpu: GpuSpec { vendor, extra_args },
+        claude: ClaudeSpec { flags: claude_flags },
     };
     let machine_changed = existing.as_ref() != Some(&new_cfg);
     machine::save(&new_cfg)?;
@@ -417,6 +466,10 @@ fn run_cfg_wizard() -> Result<()> {
         println!("Saved {}.", machine::oauth_token_path().display());
     }
 
+    // ---- Desktop integration (KDE auto-install only) ----
+    println!();
+    run_cfg_desktop_step()?;
+
     if machine_changed || oauth_changed {
         println!();
         println!(
@@ -431,6 +484,71 @@ fn run_cfg_wizard() -> Result<()> {
         }
     } else if existing.is_some() {
         println!("No changes.");
+    }
+    Ok(())
+}
+
+/// Detect the host's desktop environment and offer to install the
+/// matching right-click "Open in claude-sandbox" context-menu entry.
+/// KDE Plasma is auto-installable (we ship the Dolphin servicemenu);
+/// other DEs need manual setup per `docs/recipes/context-menu.md`.
+fn run_cfg_desktop_step() -> Result<()> {
+    use claude_sandbox::desktop::{self, Desktop};
+    use dialoguer::Confirm;
+
+    match desktop::detect() {
+        Desktop::Kde => {
+            if desktop::kde_servicemenu_installed() {
+                println!(
+                    "==> Dolphin context menu already installed at {} — skipping.",
+                    desktop::kde_servicemenu_path().display()
+                );
+                return Ok(());
+            }
+            println!("==> Desktop environment detected: KDE Plasma");
+            let install = Confirm::new()
+                .with_prompt(
+                    "Install a Dolphin right-click \"Open in claude-sandbox\" \
+                     context-menu entry?",
+                )
+                .default(true)
+                .interact()
+                .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+            if install {
+                let path = desktop::install_kde_servicemenu().map_err(|e| {
+                    claude_sandbox::error::Error::Other(format!(
+                        "writing servicemenu: {e}"
+                    ))
+                })?;
+                println!("    Installed {}.", path.display());
+                println!(
+                    "    Edit the `Exec=` line if you want a terminal other than konsole."
+                );
+            }
+        }
+        Desktop::Other(de) => {
+            println!(
+                "==> Desktop environment detected: {de} (auto-install unsupported)"
+            );
+            println!(
+                "    Only KDE Plasma has a bundled context-menu entry. See"
+            );
+            println!(
+                "    docs/recipes/context-menu.md for the manual setup on GNOME,"
+            );
+            println!("    XFCE, Cinnamon, etc.");
+        }
+        Desktop::Unknown => {
+            println!(
+                "==> No desktop environment detected (XDG_CURRENT_DESKTOP unset)."
+            );
+            println!(
+                "    Skipping context-menu setup. See docs/recipes/context-menu.md"
+            );
+            println!(
+                "    if you want to wire one up manually on a non-standard setup."
+            );
+        }
     }
     Ok(())
 }
@@ -471,13 +589,14 @@ fn start_goal_main(
     derived_name: &str,
     condition: &str,
 ) -> Result<()> {
-    let name = prepare_container(podman, project, derived_name)?;
+    let prep = prepare_container(podman, project, derived_name)?;
+    let flags = resolve_claude_flags(&prep.project_cfg, &prep.machine_cfg);
     let goal_arg = format!("/goal {condition}");
     let mut argv: Vec<&str> = vec!["claude", "-p"];
-    argv.extend_from_slice(CLAUDE_FLAGS);
+    argv.extend(flags.iter().map(|s| s.as_str()));
     argv.push(&goal_arg);
     claude_sandbox::terminal::set_title(project, None);
-    exec_into(&name, &argv)
+    exec_into(&prep.name, &argv)
 }
 
 fn start_goal_in_worktree(
@@ -489,12 +608,13 @@ fn start_goal_in_worktree(
     force: bool,
 ) -> Result<()> {
     use claude_sandbox::worktree::claim::{self, ClaimState};
-    let container = prepare_container(podman, project, derived_name)?;
+    let prep = prepare_container(podman, project, derived_name)?;
+    let flags = resolve_claude_flags(&prep.project_cfg, &prep.machine_cfg);
     let wt_dir = project.join(".worktrees").join(worktree);
     if !wt_dir.exists() {
         podman.run_inherit(&[
             "exec".into(),
-            container.clone(),
+            prep.name.clone(),
             "cs".into(),
             "worktree".into(),
             "add".into(),
@@ -513,8 +633,8 @@ fn start_goal_in_worktree(
     claim::write(&wt_dir)?;
     let goal_arg = format!("/goal {condition}");
     let inner_cmd = format!(
-        "claude -p {flags} {goal}",
-        flags = CLAUDE_FLAGS.join(" "),
+        "claude -p {flags_str} {goal}",
+        flags_str = flags.join(" "),
         goal = sh_squote(&goal_arg),
     );
     let wt_path = wt_dir.display().to_string();
@@ -523,7 +643,7 @@ fn start_goal_in_worktree(
         wt = wt_path,
     );
     claude_sandbox::terminal::set_title(project, Some(worktree));
-    claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
+    claude_sandbox::container::exec::exec_into(&prep.name, &["bash", "-c", &cleanup])
 }
 
 /// Auto-create the toml if missing, load + merge config, resolve the
@@ -534,11 +654,17 @@ fn start_goal_in_worktree(
 /// Returns the resolved container name. Used by both the main-checkout
 /// launch path and the worktree launch path so they share container
 /// lifecycle and only differ in their final exec.
+pub struct Prepared {
+    pub name: String,
+    pub project_cfg: ConfigFile,
+    pub machine_cfg: claude_sandbox::machine::MachineConfig,
+}
+
 fn prepare_container(
     podman: &Podman,
     project: &std::path::Path,
     derived_name: &str,
-) -> Result<String> {
+) -> Result<Prepared> {
     use claude_sandbox::container::create::{
         ensure_container, grant_acls, run_deps_script, run_setup, CreateOptions,
     };
@@ -672,17 +798,22 @@ fn prepare_container(
         hooks::HookUser::Root,
     )?;
 
-    Ok(name)
+    Ok(Prepared {
+        name,
+        project_cfg: cfg,
+        machine_cfg,
+    })
 }
 
 fn start_or_shell(podman: &Podman, project: &std::path::Path, derived_name: &str, inner: &str) -> Result<()> {
-    let name = prepare_container(podman, project, derived_name)?;
+    let prep = prepare_container(podman, project, derived_name)?;
+    let flags = resolve_claude_flags(&prep.project_cfg, &prep.machine_cfg);
     let mut argv: Vec<&str> = vec![inner];
     if inner == "claude" {
-        argv.extend_from_slice(CLAUDE_FLAGS);
+        argv.extend(flags.iter().map(|s| s.as_str()));
     }
     claude_sandbox::terminal::set_title(project, None);
-    exec_into(&name, &argv)
+    exec_into(&prep.name, &argv)
 }
 
 fn run_cs() -> Result<()> {
@@ -745,10 +876,15 @@ fn run_cs() -> Result<()> {
         CsCmd::Goal { condition } => {
             let cond = condition.join(" ");
             let goal_arg = format!("/goal {cond}");
-            let mut argv: Vec<&str> = vec!["claude", "-p"];
-            argv.extend_from_slice(CLAUDE_FLAGS);
-            argv.push(&goal_arg);
-            let status = std::process::Command::new(argv[0])
+            // Use the flags the host wrapper baked in at container create.
+            // Falls back to the safety baseline if a legacy container
+            // (pre-CS_CLAUDE_FLAGS) is still around.
+            let flags_str = std::env::var("CS_CLAUDE_FLAGS")
+                .unwrap_or_else(|_| "--dangerously-skip-permissions".into());
+            let mut argv: Vec<String> = vec!["claude".into(), "-p".into()];
+            argv.extend(flags_str.split_whitespace().map(|s| s.to_string()));
+            argv.push(goal_arg);
+            let status = std::process::Command::new(&argv[0])
                 .args(&argv[1..])
                 .status()?;
             if !status.success() {
@@ -816,15 +952,17 @@ fn start_in_worktree(
     use claude_sandbox::worktree::claim::{self, ClaimState};
     // Full container lifecycle: create-if-missing, setup + deps on first
     // create, ensure running, ACLs, on_start hooks. Returns the resolved
-    // (config-aware, collision-suffixed) container name.
-    let container = prepare_container(podman, project, derived_name)?;
+    // (config-aware, collision-suffixed) container name + the configs
+    // we'll need to assemble the claude argv.
+    let prep = prepare_container(podman, project, derived_name)?;
+    let flags = resolve_claude_flags(&prep.project_cfg, &prep.machine_cfg);
     let wt_dir = project.join(".worktrees").join(worktree);
 
     // Auto-create worktree if missing (spec §5.3: `-w feat-x` creates if absent).
     if !wt_dir.exists() {
         podman.run_inherit(&[
             "exec".into(),
-            container.clone(),
+            prep.name.clone(),
             "cs".into(),
             "worktree".into(),
             "add".into(),
@@ -850,7 +988,7 @@ fn start_in_worktree(
     // resets PATH and drops /root/.local/bin — that hides the `claude`
     // binary installed there by the Anthropic installer.
     let inner_cmd = if inner == "claude" {
-        format!("claude {}", CLAUDE_FLAGS.join(" "))
+        format!("claude {}", flags.join(" "))
     } else {
         inner.to_string()
     };
@@ -862,7 +1000,7 @@ fn start_in_worktree(
         wt = wt_path,
     );
     claude_sandbox::terminal::set_title(project, Some(worktree));
-    claude_sandbox::container::exec::exec_into(&container, &["bash", "-c", &cleanup])
+    claude_sandbox::container::exec::exec_into(&prep.name, &["bash", "-c", &cleanup])
 }
 
 fn create_worktree_and_start(
@@ -873,10 +1011,11 @@ fn create_worktree_and_start(
     branch: Option<&str>,
 ) -> Result<()> {
     use claude_sandbox::container::exec::exec_into;
-    let container = prepare_container(podman, project, derived_name)?;
+    let prep = prepare_container(podman, project, derived_name)?;
+    let flags = resolve_claude_flags(&prep.project_cfg, &prep.machine_cfg).join(" ");
     let mut args: Vec<String> = vec![
         "exec".into(),
-        container.clone(),
+        prep.name.clone(),
         "cs".into(),
         "worktree".into(),
         "add".into(),
@@ -890,7 +1029,6 @@ fn create_worktree_and_start(
     let _ = project;
     // Now exec into claude in that worktree.
     // `bash -c` (non-login) preserves PATH; `-lc` would drop /root/.local/bin.
-    let flags = CLAUDE_FLAGS.join(" ");
     let wt_path = project
         .join(".worktrees")
         .join(worktree)
@@ -898,7 +1036,7 @@ fn create_worktree_and_start(
         .to_string();
     claude_sandbox::terminal::set_title(project, Some(worktree));
     exec_into(
-        &container,
+        &prep.name,
         &[
             "bash", "-c",
             &format!("cd {wt_path} && exec claude {flags}"),

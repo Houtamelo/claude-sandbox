@@ -20,6 +20,28 @@ pub enum Volume {
 /// Must match the user created in the image's Dockerfile.
 pub const CONTAINER_USER: &str = "claude";
 
+/// Path of the empty-credentials shadow file used to take the in-container
+/// claude out of the OAuth refresh-token race pool (issue #27933). Calling
+/// this function also materializes the file on disk so the bind-mount has
+/// a target; idempotent across calls. Lives in the cache dir alongside
+/// other transient claude-sandbox state.
+///
+/// Payload is the JSON object `{}` rather than zero bytes — claude-code
+/// parses this file with a JSON parser and errors on empty input on some
+/// versions. An empty object has no `claudeAiOauth` key, so claude-code
+/// finds no refresh token and falls back to `CLAUDE_CODE_OAUTH_TOKEN`
+/// for inference auth.
+pub fn empty_credentials_path() -> PathBuf {
+    let p = paths::cache_dir().join("empty-credentials.json");
+    if !p.exists() {
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&p, "{}");
+    }
+    p
+}
+
 /// In-container HOME path. Matches the host user's HOME so Claude Code's
 /// HOME-keyed setup-state cache (`~/.cache/claude-cli-nodejs/-<HOME->/`)
 /// can be located via a simple bind-mount.
@@ -40,7 +62,10 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
             container: project_path.to_path_buf(),
             ro: false,
         }),
-        // Persistent claude state (credentials, settings, projects, sessions).
+        // Persistent claude state (settings, agents, plugins, sessions).
+        // Note: `.credentials.json` underneath this directory is
+        // selectively shadowed below when `CLAUDE_CODE_OAUTH_TOKEN` is
+        // configured — see the shadow-mount block after this vec.
         Volume::Bind(Mount {
             host: home.join(".claude"),
             container: chome.join(".claude"),
@@ -76,6 +101,31 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
             ro: false,
         },
     ];
+    // When the user has configured a long-lived `CLAUDE_CODE_OAUTH_TOKEN`
+    // (via `claude-sandbox cfg`), shadow the bind-mounted `.credentials.json`
+    // with an empty file so the in-container claude doesn't read the host's
+    // refresh token. Without this, every container start can trigger a
+    // refresh — racing other concurrent claude processes (host + other
+    // sandboxes) and invalidating the entire OAuth refresh-token family
+    // server-side per the well-known race condition in claude-code
+    // (https://github.com/anthropics/claude-code/issues/27933).
+    //
+    // The container falls back to `CLAUDE_CODE_OAUTH_TOKEN` (injected as
+    // an env var at create time) for inference auth. The shadow is read-
+    // only: the container has no business writing to credentials.
+    //
+    // Skipped entirely when no OAuth token is configured — those users
+    // still rely on the bind-mounted `.credentials.json` for in-container
+    // auth, and shadowing would lock them out. Order matters: this mount
+    // must come AFTER the `~/.claude/` directory mount above so podman
+    // applies it on top.
+    if crate::machine::oauth_token_exists() {
+        v.push(Volume::Bind(Mount {
+            host: empty_credentials_path(),
+            container: chome.join(".claude/.credentials.json"),
+            ro: true,
+        }));
+    }
     let gitconfig = home.join(".gitconfig");
     if gitconfig.exists() {
         v.push(Volume::Bind(Mount {

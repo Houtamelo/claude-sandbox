@@ -17,6 +17,7 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 | Base image (`FROM`) | `[image] base` in `machine.toml`, default `debian:trixie-slim`. Templates Dockerfile `ARG BASE_IMAGE`. Must be apt-based; Tailscale layer is the only thing that breaks on non-Debian-Trixie bases. |
 | Claude auth (avoiding refresh-token rotation across shared `.credentials.json`) | Long-lived `CLAUDE_CODE_OAUTH_TOKEN` stored mode 600 at `~/.config/claude-sandbox/oauth_token`, validated against Anthropic's API at cfg-save AND container-start time, injected per-container. |
 | SELinux opt-out unconditional | Runtime-detected via `/sys/fs/selinux/enforce`. `--security-opt label=disable` only emitted when SELinux is actually loaded; absent on Ubuntu/Mint/vanilla Arch. |
+| GPU vendor (was NVIDIA-only) | `[gpu] vendor` in `machine.toml` — `none` (default), `nvidia`, `amd`, `intel`, or `custom`. cfg wizard probes (`/proc/driver/nvidia`, `/dev/kfd`, `/sys/class/drm/card0/device/vendor`) and pre-fills the prompt. `extra_args = [...]` is appended in every variant, including `none` and `custom`, as an escape hatch for driver-specific quirks. Per-project `gpu: bool` stays the toggle. |
 
 ---
 
@@ -27,10 +28,6 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 *(All items in this tier are now done. Next major friction point is in Significant.)*
 
 ### Significant (constrains real use cases)
-
-- **GPU is NVIDIA-only.** `features::gpu::extra_args` returns `["--device", "nvidia.com/gpu=all"]`. AMD ROCm / Intel iGPU users get nothing.
-  - *Proposal:* change `gpu = true` to `gpu = "nvidia" | "amd" | "intel" | "none"` (or `[gpu] vendor = "..."`) in per-project `.claude-sandbox.toml`. Branch on the value.
-  - *Scope:* ~30 min.
 
 - **Tailscale install layer hardcodes Debian-Trixie codename.** `pkgs.tailscale.com/stable/debian/trixie.*` URLs in the Dockerfile. Breaks rebuilds on any non-Debian-Trixie base.
   - *Proposal:* add `[image] with_tailscale: bool` (default true) — gates the entire install layer. Off-by-default skips it; users on alternate bases can disable it. Codename matching is option B / out of scope.

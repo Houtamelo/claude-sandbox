@@ -116,6 +116,7 @@ fn create_and_start(sb: &Sandbox) {
             machine_hash: None,
             oauth_hash: None,
             oauth_token: None,
+            machine_cfg: None,
         },
     )
     .expect("ensure_container");

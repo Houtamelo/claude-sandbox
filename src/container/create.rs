@@ -61,6 +61,10 @@ pub struct CreateOptions<'a> {
     /// the in-container claude binary authenticates directly via env
     /// (per-container auth, no shared `.credentials.json` rotation).
     pub oauth_token: Option<&'a str>,
+    /// Reference to the machine-wide config. Used to resolve GPU
+    /// vendor/extra_args (and future per-host settings). `None` in
+    /// tests that bypass the cfg gate; production always populates it.
+    pub machine_cfg: Option<&'a crate::machine::MachineConfig>,
 }
 
 pub fn run_setup(
@@ -262,7 +266,17 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     // Workdir is the project's host path (same as the bind-mount target),
     // so claude's session-CWD matches between in- and out-of-container.
     let workdir = opts.project_path.to_path_buf();
-    let gpu_extras = crate::features::gpu::extra_args(opts.config.gpu);
+    // GPU flags: vendor from machine.toml, project-level toggle from
+    // .claude-sandbox.toml. Falls back to GpuSpec::default() (vendor =
+    // None, no extra args) when machine config is unavailable in tests.
+    let gpu_extras = match opts.machine_cfg {
+        Some(m) => crate::features::gpu::flags(
+            m.gpu.vendor,
+            &m.gpu.extra_args,
+            opts.config.gpu,
+        ),
+        None => Vec::new(),
+    };
     let spec = CreateSpec {
         name: opts.name,
         image: opts.image,

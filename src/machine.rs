@@ -29,6 +29,11 @@ pub struct MachineConfig {
     /// `#[serde(default)]` fills in the canonical Debian Trixie value.
     #[serde(default)]
     pub image: ImageSpec,
+    /// GPU passthrough settings. Optional for back-compat; defaults to
+    /// `vendor = "none"` so existing machine.toml files don't grow GPU
+    /// behavior they didn't ask for.
+    #[serde(default)]
+    pub gpu: GpuSpec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,6 +62,21 @@ impl Default for ImageSpec {
     fn default() -> Self {
         Self { base: "debian:trixie-slim".into() }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, default)]
+pub struct GpuSpec {
+    /// Host GPU vendor — drives the canonical podman flags emitted
+    /// when a project sets `gpu = true`. See `features::gpu::GpuVendor`.
+    pub vendor: crate::features::gpu::GpuVendor,
+    /// Verbatim flags appended to whatever the vendor emits. Escape
+    /// hatch for kernel-driver / userspace quirks the built-in recipes
+    /// don't cover (e.g. `--device /dev/dri/renderD129` for a specific
+    /// secondary GPU, or `--security-opt label=type:container_runtime_t`
+    /// for esoteric SELinux setups). Applied for every vendor including
+    /// `none` and `custom`.
+    pub extra_args: Vec<String>,
 }
 
 pub fn path() -> PathBuf {

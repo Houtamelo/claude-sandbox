@@ -131,6 +131,7 @@ fn create_via_lib(sb: &Sandbox) {
             machine_hash: None,
             oauth_hash: None,
             oauth_token: None,
+            machine_cfg: None,
         },
     )
     .expect("ensure_container");

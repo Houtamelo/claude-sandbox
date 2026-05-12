@@ -217,7 +217,8 @@ fn run_host() -> Result<()> {
 /// Today: just the host UID. Future steps will land here in order
 /// (SELinux, GPU vendor, image base, …).
 fn run_cfg_wizard() -> Result<()> {
-    use claude_sandbox::machine::{self, HostSpec, ImageSpec, MachineConfig};
+    use claude_sandbox::features::gpu::{self as gpu_feat, GpuVendor};
+    use claude_sandbox::machine::{self, GpuSpec, HostSpec, ImageSpec, MachineConfig};
     use dialoguer::{Confirm, Input, Password};
 
     let existing = if machine::exists() { machine::load().ok() } else { None };
@@ -263,9 +264,52 @@ fn run_cfg_wizard() -> Result<()> {
         .interact_text()
         .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
 
+    // ---- GPU vendor ----
+    let detected_vendor = gpu_feat::probe();
+    let saved_vendor: Option<GpuVendor> = existing.as_ref().map(|c| c.gpu.vendor);
+    let default_vendor = saved_vendor.unwrap_or(detected_vendor);
+    let label = match (saved_vendor, detected_vendor) {
+        (Some(sv), dv) if sv != dv => {
+            format!("GPU vendor (saved: {}, probed: {}) [nvidia/amd/intel/none/custom]",
+                    sv.as_str(), dv.as_str())
+        }
+        (Some(sv), _) => format!("GPU vendor (saved: {}) [nvidia/amd/intel/none/custom]", sv.as_str()),
+        (None, dv) => format!("GPU vendor (probed: {}) [nvidia/amd/intel/none/custom]", dv.as_str()),
+    };
+    let vendor = loop {
+        let raw: String = Input::<String>::new()
+            .with_prompt(&label)
+            .default(default_vendor.as_str().to_string())
+            .interact_text()
+            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+        match GpuVendor::parse(&raw) {
+            Some(v) => break v,
+            None => println!(
+                "  ! unknown vendor `{raw}`. Pick one of: nvidia, amd, intel, none, custom"
+            ),
+        }
+    };
+    // extra_args is a power-user knob. Don't prompt; preserve existing,
+    // default empty. Tell the user where to find it if they need it.
+    let extra_args = existing
+        .as_ref()
+        .map(|c| c.gpu.extra_args.clone())
+        .unwrap_or_default();
+    if !extra_args.is_empty() {
+        println!(
+            "    Keeping existing gpu.extra_args ({} entries). Edit machine.toml to change.",
+            extra_args.len()
+        );
+    } else {
+        println!(
+            "    (gpu.extra_args is empty. Edit machine.toml directly if your GPU needs extra podman flags.)"
+        );
+    }
+
     let new_cfg = MachineConfig {
         host: HostSpec { uid },
         image: ImageSpec { base },
+        gpu: GpuSpec { vendor, extra_args },
     };
     let machine_changed = existing.as_ref() != Some(&new_cfg);
     machine::save(&new_cfg)?;
@@ -562,6 +606,7 @@ fn prepare_container(
             machine_hash: Some(&current_machine_hash),
             oauth_hash: Some(&current_oauth_hash),
             oauth_token: oauth_token.as_deref(),
+            machine_cfg: Some(&machine_cfg),
         },
     )?;
 

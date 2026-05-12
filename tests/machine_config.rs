@@ -1,9 +1,10 @@
-use claude_sandbox::machine::{content_hash, HostSpec, ImageSpec, MachineConfig};
+use claude_sandbox::machine::{content_hash, GpuSpec, HostSpec, ImageSpec, MachineConfig};
 
 fn cfg(uid: u32) -> MachineConfig {
     MachineConfig {
         host: HostSpec { uid },
         image: ImageSpec::default(),
+        gpu: GpuSpec::default(),
     }
 }
 
@@ -42,6 +43,13 @@ fn default_image_base_is_debian_trixie_slim() {
     // the [image] section deserialize with this value. Changing it
     // silently would invalidate every existing user's container.
     assert_eq!(ImageSpec::default().base, "debian:trixie-slim");
+}
+
+#[test]
+fn legacy_toml_without_gpu_section_parses() {
+    let body = "[host]\nuid = 1000\n[image]\nbase = \"debian:trixie-slim\"\n";
+    let c: MachineConfig = toml::from_str(body).expect("legacy toml should parse");
+    assert_eq!(c.gpu, claude_sandbox::machine::GpuSpec::default());
 }
 
 #[test]

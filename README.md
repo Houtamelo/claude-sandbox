@@ -30,6 +30,14 @@ Claude gets full `sudo` inside; your host is unaffected.
 - SELinux-enabled hosts (Tumbleweed, Fedora, RHEL): no manual action needed —
   detected at runtime, container creation emits `--security-opt label=disable`
   automatically.
+- **Host `claude` version:** the in-container `claude` is pinned to whatever
+  version the host runs (detected by `image::rebuild` and passed as the
+  `CLAUDE_VERSION` build arg). The `claude-sandbox goal` / `cs goal`
+  subcommands rely on Claude Code's built-in `/goal` slash command, which
+  was added in **Claude Code 2.1.139**. Earlier hosts get an
+  `Unknown command: /goal` from claude inside the container. Upgrade host
+  claude and run `claude-sandbox rebuild` to refresh the image. Other
+  subcommands work on older claude versions.
 
 ## Install
 
@@ -67,7 +75,7 @@ at least once.
     claude-sandbox init        # marks the dir as a project (.claude-sandbox.toml)
     claude-sandbox             # creates a container on first run, launches `claude`
     claude-sandbox shell       # bash inside
-    claude-sandbox goal "..."  # headless `/goal` session (set-and-forget)
+    claude-sandbox goal "..."  # headless `/goal` session — requires host claude >= 2.1.139
     claude-sandbox stop        # preserves state
     claude-sandbox down        # destroys container + named home volume
     claude-sandbox ls          # list all claude-sandbox-managed containers

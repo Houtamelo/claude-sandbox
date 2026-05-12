@@ -16,6 +16,7 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 | Host UID | `[host] uid` in `~/.config/claude-sandbox/machine.toml`, captured by `claude-sandbox cfg`, plumbed through Dockerfile `ARG HOSTUID`. Auto-rebuild on change via `cs-machine-hash` label. |
 | Base image (`FROM`) | `[image] base` in `machine.toml`, default `debian:trixie-slim`. Templates Dockerfile `ARG BASE_IMAGE`. Must be apt-based; Tailscale layer is the only thing that breaks on non-Debian-Trixie bases. |
 | Claude auth (avoiding refresh-token rotation across shared `.credentials.json`) | Long-lived `CLAUDE_CODE_OAUTH_TOKEN` stored mode 600 at `~/.config/claude-sandbox/oauth_token`, validated against Anthropic's API at cfg-save AND container-start time, injected per-container. |
+| SELinux opt-out unconditional | Runtime-detected via `/sys/fs/selinux/enforce`. `--security-opt label=disable` only emitted when SELinux is actually loaded; absent on Ubuntu/Mint/vanilla Arch. |
 
 ---
 
@@ -23,9 +24,7 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 
 ### Critical (blocks non-author users)
 
-- **Tumbleweed-specific runtime prereqs unconditional.** `--security-opt label=disable` is always passed; only needed on SELinux hosts. `crun` + `fuse-overlayfs` are documented prereqs but only needed on Tumbleweed.
-  - *Proposal:* runtime-detect SELinux (`getenforce` returning `Disabled` → skip flag). Document crun/fuse-overlayfs as Tumbleweed-only in README.
-  - *Scope:* ~30 min.
+*(All items in this tier are now done. Next major friction point is in Significant.)*
 
 ### Significant (constrains real use cases)
 

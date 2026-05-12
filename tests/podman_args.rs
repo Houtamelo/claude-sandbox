@@ -31,6 +31,7 @@ fn create_args_baseline() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: None,
+        selinux: true,
     };
 
     let args = create_args(&spec);
@@ -73,6 +74,7 @@ fn create_args_with_ports_and_ro_mount() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: None,
+        selinux: true,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"/etc/foo:/etc/foo:ro".into()));
@@ -95,6 +97,7 @@ fn create_args_includes_toml_hash_label_when_set() {
         toml_hash: Some("deadbeefcafef00d"),
         machine_hash: None,
         oauth_hash: None,
+        selinux: true,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"cs-toml-hash=deadbeefcafef00d".into()));
@@ -115,6 +118,7 @@ fn create_args_omits_toml_hash_label_when_none() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: None,
+        selinux: true,
     };
     let args = create_args(&spec);
     // No cs-toml-hash=... entry. The discovery label cs-managed=1 is
@@ -138,9 +142,48 @@ fn create_args_includes_oauth_hash_label_when_set() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: Some("0123456789abcdef"),
+        selinux: true,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"cs-oauth-hash=0123456789abcdef".into()));
+}
+
+#[test]
+fn create_args_emits_selinux_optout_when_enabled() {
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x", image: "i:1",
+        volumes: &[], env: &[], network: "bridge", ports: &[],
+        workdir: &workdir, extra: &[],
+        toml_hash: None, machine_hash: None, oauth_hash: None,
+        selinux: true,
+    };
+    let args = create_args(&spec);
+    assert!(args.contains(&"--security-opt".into()), "missing --security-opt: {args:?}");
+    assert!(args.contains(&"label=disable".into()), "missing label=disable: {args:?}");
+}
+
+#[test]
+fn create_args_omits_selinux_optout_when_disabled() {
+    // Non-SELinux hosts (Ubuntu, Mint, vanilla Arch) get a cleaner
+    // podman invocation. The label=disable flag is at best a no-op
+    // there, at worst a deprecation warning on older podman.
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x", image: "i:1",
+        volumes: &[], env: &[], network: "bridge", ports: &[],
+        workdir: &workdir, extra: &[],
+        toml_hash: None, machine_hash: None, oauth_hash: None,
+        selinux: false,
+    };
+    let args = create_args(&spec);
+    assert!(
+        !args.contains(&"--security-opt".into()),
+        "--security-opt should not appear when selinux=false; got {args:?}"
+    );
+    assert!(!args.contains(&"label=disable".into()));
+    // Discovery label is still unconditional.
+    assert!(args.contains(&"cs-managed=1".into()));
 }
 
 #[test]

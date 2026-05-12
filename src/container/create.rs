@@ -275,6 +275,7 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         toml_hash: current_toml_hash.as_deref(),
         machine_hash: current_machine_hash.as_deref(),
         oauth_hash: current_oauth_hash.as_deref(),
+        selinux: crate::features::selinux::enabled(),
     };
     podman.run(&create_args(&spec))?;
     let _ = crate::registry::upsert(opts.name, opts.project_path);

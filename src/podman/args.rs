@@ -27,6 +27,12 @@ pub struct CreateSpec<'a> {
     /// recreate (env vars are baked at create time) but NOT an image
     /// rebuild (the token doesn't appear in the Dockerfile).
     pub oauth_hash: Option<&'a str>,
+    /// True when the host kernel has SELinux loaded — emits
+    /// `--security-opt label=disable` to opt the container out of
+    /// SELinux confinement (without mutating host file labels). False
+    /// on Ubuntu / Mint / vanilla Arch where the flag is a no-op or
+    /// warning-trigger.
+    pub selinux: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,19 +51,21 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         "--network".into(),
         spec.network.into(),
         "--init".into(),
+        // Marker label so `claude-sandbox ls` can find every container we own
+        // regardless of its derived name (which has no fixed prefix).
+        "--label".into(),
+        "cs-managed=1".into(),
+    ];
+    if spec.selinux {
         // Opt the container out of SELinux confinement (the rootless+userns
         // protections remain). Without this, bind-mounted host paths labeled
         // `user_tmp_t` / `user_home_t` are denied to the container's
         // `container_t` context on SELinux-enabled hosts (openSUSE, Fedora,
         // RHEL). `--security-opt label=disable` is per-container and does NOT
         // mutate host file labels (unlike `:z` / `:Z` mount flags).
-        "--security-opt".into(),
-        "label=disable".into(),
-        // Marker label so `claude-sandbox ls` can find every container we own
-        // regardless of its derived name (which has no fixed prefix).
-        "--label".into(),
-        "cs-managed=1".into(),
-    ];
+        v.push("--security-opt".into());
+        v.push("label=disable".into());
+    }
     if let Some(h) = spec.toml_hash {
         v.push("--label".into());
         v.push(format!("cs-toml-hash={h}"));

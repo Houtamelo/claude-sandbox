@@ -29,13 +29,25 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
 # triggers theme/login prompts every session. `claude-sandbox rebuild` passes
 # `--build-arg HOSTHOME=$HOME` so the image matches.
 ARG HOSTHOME=/home/claude
+# Host UID for the in-image `claude` user. Must match the host user's
+# UID so bind-mounted files round-trip cleanly through userns. Default
+# 1000 (typical Linux first-user UID) is only a fallback — the real
+# value comes from `~/.config/claude-sandbox/machine.toml` via
+# `claude-sandbox cfg` → `claude-sandbox rebuild`.
+ARG HOSTUID=1000
+# Content hash of `machine.toml` at build time. Stamped as an image
+# label so `claude-sandbox` can detect a stale image vs the current
+# machine config and auto-trigger rebuild + container recreate (same
+# hash-as-label pattern used for per-project `.claude-sandbox.toml`).
+ARG CS_MACHINE_HASH=unset
+LABEL cs-machine-hash=$CS_MACHINE_HASH
 
 # claude user: non-root (Claude Code refuses --dangerously-skip-permissions as
 # root); primary GID 0 (root group) so files claude creates inside have group
 # = container root = host user via userns, giving the host user rw via group
 # thanks to `umask 002`.
 RUN mkdir -p "$(dirname "$HOSTHOME")" \
- && useradd -m -d "$HOSTHOME" -u 1000 -g 0 -G sudo -s /bin/bash claude \
+ && useradd -m -d "$HOSTHOME" -u "$HOSTUID" -g 0 -G sudo -s /bin/bash claude \
  && echo "claude ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/claude \
  && chmod 0440 /etc/sudoers.d/claude \
  && echo "umask 002" >> "$HOSTHOME/.bashrc"

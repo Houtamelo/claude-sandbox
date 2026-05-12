@@ -7,10 +7,22 @@ use std::path::PathBuf;
 
 use common::Sandbox;
 
+/// Run `claude-sandbox <args>` in `dir`. Isolates the binary from the
+/// host's real `~/.config/claude-sandbox/` by pointing HOME +
+/// XDG_CONFIG_HOME at a fresh tempdir, and seeds a minimal `machine.toml`
+/// inside it so the machine-setup gate is satisfied (these tests
+/// don't exercise the gate, they need to be past it).
 fn run_cli_in(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let home = tempfile::tempdir().expect("home tempdir").into_path();
+    let cfg_dir = home.join(".config/claude-sandbox");
+    std::fs::create_dir_all(&cfg_dir).expect("create config dir");
+    std::fs::write(cfg_dir.join("machine.toml"), "[host]\nuid = 1000\n")
+        .expect("seed machine.toml");
     std::process::Command::new(Sandbox::bin())
         .args(args)
         .current_dir(dir)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .output()

@@ -6,6 +6,7 @@ pub mod error;
 pub mod features;
 pub mod hooks;
 pub mod logging;
+pub mod machine;
 pub mod mounts;
 pub mod network;
 pub mod paths;

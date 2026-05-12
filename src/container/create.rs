@@ -47,6 +47,11 @@ pub struct CreateOptions<'a> {
     pub image: &'a str,
     pub project_path: &'a Path,
     pub config: &'a ConfigFile,
+    /// Current machine.toml content hash. Stamped as a container label
+    /// so subsequent starts can detect host-wide config changes (UID,
+    /// future SELinux/GPU sections) and trigger rm+recreate. `None` in
+    /// tests that bypass the machine.toml gate.
+    pub machine_hash: Option<&'a str>,
 }
 
 pub fn run_setup(
@@ -166,23 +171,33 @@ pub fn grant_acls(
 }
 
 pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
-    let current_hash = toml_content_hash(opts.project_path);
+    let current_toml_hash = toml_content_hash(opts.project_path);
+    let current_machine_hash = opts.machine_hash.map(|s| s.to_string());
     if podman.container_exists(opts.name)? {
-        // Compare the toml hash baked into the existing container's
-        // `cs-toml-hash` label to what's on disk now. If they match,
-        // the config hasn't changed since this container was created
-        // and we can keep using it. If they differ — or the label is
-        // absent (legacy container from before this feature) — recreate
-        // so the new mounts/env/ports take effect. The named home
-        // volume (`cs-<name>-home`) is NOT removed by `rm --volumes`,
-        // so the in-container `$HOME` survives the recreate.
-        let existing_hash = container_label(podman, opts.name, "cs-toml-hash")
+        // Recreate the container if EITHER the project's `.claude-sandbox.toml`
+        // OR the machine's `machine.toml` content has changed since this
+        // container was built — both are baked in at create time (mounts,
+        // env, ports, image labels, etc.) and re-reading the toml is
+        // useless without a recreate. Named home volume (`cs-<name>-home`)
+        // is preserved across recreate because `rm --volumes` only drops
+        // anonymous volumes.
+        let existing_toml = container_label(podman, opts.name, "cs-toml-hash")
             .unwrap_or(None);
-        if existing_hash.as_deref() == current_hash.as_deref() {
+        let existing_machine = container_label(podman, opts.name, "cs-machine-hash")
+            .unwrap_or(None);
+        let toml_changed = existing_toml.as_deref() != current_toml_hash.as_deref();
+        let machine_changed = existing_machine.as_deref() != current_machine_hash.as_deref();
+        if !toml_changed && !machine_changed {
             return Ok(false);
         }
+        let reason = match (toml_changed, machine_changed) {
+            (true, true) => "project config + machine config changed",
+            (true, false) => "project .claude-sandbox.toml changed",
+            (false, true) => "machine.toml changed",
+            (false, false) => unreachable!(),
+        };
         crate::step!(
-            "Configuration changed — recreating container (named home volume survives)"
+            "{reason} — recreating container (named home volume survives)"
         );
         podman.run(&crate::podman::args::rm_args(opts.name))?;
         let _ = crate::registry::remove(opts.name);
@@ -238,7 +253,8 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         ports: &ports,
         workdir: &workdir,
         extra: &gpu_extras,
-        toml_hash: current_hash.as_deref(),
+        toml_hash: current_toml_hash.as_deref(),
+        machine_hash: current_machine_hash.as_deref(),
     };
     podman.run(&create_args(&spec))?;
     let _ = crate::registry::upsert(opts.name, opts.project_path);

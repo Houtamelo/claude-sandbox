@@ -65,6 +65,11 @@ pub enum Cmd {
     /// Mark the current directory as a project by writing a minimal
     /// `.claude-sandbox.toml`. Idempotent (no-op if the file already exists).
     Init,
+    /// Interactive machine-setup wizard. Walks through host-environment
+    /// questions (UID first; more inputs added incrementally) and writes
+    /// the answers to `~/.config/claude-sandbox/machine.toml`. Every
+    /// other subcommand requires this to have been run at least once.
+    Cfg,
     /// Launch claude in headless `/goal` mode. The agent keeps working
     /// turn-after-turn until a Haiku evaluator decides the condition is
     /// met. All trailing args are joined into the goal condition.

@@ -113,6 +113,7 @@ fn create_and_start(sb: &Sandbox) {
             image: common::IMAGE,
             project_path: sb.path(),
             config: &cfg,
+            machine_hash: None,
         },
     )
     .expect("ensure_container");

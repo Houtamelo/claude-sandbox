@@ -17,6 +17,11 @@ pub struct CreateSpec<'a> {
     /// has changed and trigger an automatic rm+recreate (named home
     /// volume survives). `None` when the project has no toml.
     pub toml_hash: Option<&'a str>,
+    /// Content hash of `machine.toml`. Stored as a container label so
+    /// changes to host-wide setup (currently just UID) trigger the same
+    /// rm+recreate path. Always Some(_) in production (the gate
+    /// guarantees machine.toml exists); tests can pass None.
+    pub machine_hash: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +56,10 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
     if let Some(h) = spec.toml_hash {
         v.push("--label".into());
         v.push(format!("cs-toml-hash={h}"));
+    }
+    if let Some(h) = spec.machine_hash {
+        v.push("--label".into());
+        v.push(format!("cs-machine-hash={h}"));
     }
     for vol in spec.volumes {
         v.push("--volume".into());

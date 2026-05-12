@@ -25,6 +25,13 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     // different notifications (e.g. 2.1.138 vs 2.1.126 differ on skill-listing
     // truncation behavior). Falls back to "stable" if no host claude.
     let host_claude_version = detect_host_claude_version().unwrap_or_else(|| "stable".into());
+    // Host UID + machine.toml hash come from `claude-sandbox cfg`. We
+    // require setup at this layer too — `rebuild` is rejected by the
+    // gate in main.rs before we get here, but be defensive in case
+    // someone calls the library directly.
+    let machine_cfg = crate::machine::require_setup_done()?;
+    let host_uid = machine_cfg.host.uid;
+    let machine_hash = crate::machine::content_hash(&machine_cfg);
     let res = podman.run_inherit(&[
         "build".into(),
         "-t".into(),
@@ -33,6 +40,10 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
         format!("HOSTHOME={host_home}"),
         "--build-arg".into(),
         format!("CLAUDE_VERSION={host_claude_version}"),
+        "--build-arg".into(),
+        format!("HOSTUID={host_uid}"),
+        "--build-arg".into(),
+        format!("CS_MACHINE_HASH={machine_hash}"),
         "-f".into(),
         dockerfile.display().to_string(),
         config_dir.display().to_string(),
@@ -40,6 +51,24 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     let _ = std::fs::remove_file(&bin_dst);
     let _ = std::fs::remove_file(&claude_md_dst);
     res
+}
+
+/// Read the `cs-machine-hash` label off the locally-tagged image.
+/// Returns `None` if the image doesn't exist locally or has no such
+/// label (e.g. legacy image from before the label was added).
+pub fn image_machine_hash(podman: &Podman) -> Option<String> {
+    let v = podman
+        .run_json(&[
+            "image".into(),
+            "inspect".into(),
+            "--format".into(),
+            "{{json .Config.Labels}}".into(),
+            "claude-sandbox:0.1".into(),
+        ])
+        .ok()?;
+    v.get("cs-machine-hash")
+        .and_then(|s| s.as_str())
+        .map(|s| s.to_string())
 }
 
 /// Parse `claude --version` output (e.g. "2.1.126 (Claude Code)") into the

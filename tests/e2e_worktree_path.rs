@@ -96,6 +96,7 @@ fn create_via_lib(sb: &Sandbox) {
             image: common::IMAGE,
             project_path: sb.path(),
             config: &cfg,
+            machine_hash: None,
         },
     )
     .expect("ensure_container");

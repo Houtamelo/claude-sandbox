@@ -70,6 +70,18 @@ fn run_host() -> Result<()> {
         return Ok(());
     }
 
+    // `cfg` is the interactive machine-setup wizard. Runs without podman
+    // (nothing it does touches containers) and is the one command that
+    // legitimately runs even when machine.toml doesn't exist — it's the
+    // command that *creates* it.
+    if let Some(Cmd::Cfg) = &cli.command {
+        return run_cfg_wizard();
+    }
+
+    // Gate every other command on the machine-setup config existing.
+    // Loud error with the next-step hint baked in.
+    claude_sandbox::machine::require_setup_done()?;
+
     let podman = Podman::discover()?;
 
     // Commands that need podman but not a project.
@@ -192,8 +204,56 @@ fn run_host() -> Result<()> {
                 resolved_name,
             ])
         }
-        Cmd::Ls { .. } | Cmd::Rebuild { .. } | Cmd::Init => unreachable!(),
+        Cmd::Ls { .. } | Cmd::Rebuild { .. } | Cmd::Init | Cmd::Cfg => unreachable!(),
     }
+}
+
+/// Interactive machine-setup wizard. Walks the user through each
+/// host-environment value claude-sandbox needs to bake into the image
+/// or apply at container-create time. Re-running the wizard pre-fills
+/// each prompt with the currently-saved value (or the detected system
+/// default for first-time setup).
+///
+/// Today: just the host UID. Future steps will land here in order
+/// (SELinux, GPU vendor, image base, …).
+fn run_cfg_wizard() -> Result<()> {
+    use claude_sandbox::machine::{self, HostSpec, MachineConfig};
+    use dialoguer::Input;
+
+    let existing = if machine::exists() { machine::load().ok() } else { None };
+
+    println!("==> claude-sandbox machine-setup wizard");
+    println!("    Writes to: {}\n", machine::path().display());
+
+    // ---- Host UID ----
+    let detected_uid: u32 = nix::unistd::Uid::current().as_raw();
+    let default_uid: u32 = existing.as_ref().map(|c| c.host.uid).unwrap_or(detected_uid);
+    let label = if existing.is_some() {
+        format!("host UID (current saved: {default_uid}, detected: {detected_uid})")
+    } else {
+        format!("host UID (detected: {detected_uid})")
+    };
+    let uid: u32 = Input::new()
+        .with_prompt(label)
+        .default(default_uid)
+        .interact_text()
+        .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+
+    let new_cfg = MachineConfig { host: HostSpec { uid } };
+    let changed = existing.as_ref() != Some(&new_cfg);
+    machine::save(&new_cfg)?;
+
+    println!("\nSaved {}.", machine::path().display());
+    if changed {
+        println!(
+            "Configuration changed — run `claude-sandbox rebuild` to update the \
+             image. Existing containers will be auto-recreated on next start \
+             (named home volume survives)."
+        );
+    } else {
+        println!("No changes.");
+    }
+    Ok(())
 }
 
 /// Escape a string for single-quoted bash inclusion (`'foo'` form).
@@ -316,6 +376,27 @@ fn prepare_container(
     let cfg = load_merged(Some(&global), Some(&toml_path))?;
     let name = cfg.name.clone().unwrap_or_else(|| derived_name.to_string());
 
+    // Machine-side check: if the local image's `cs-machine-hash` label
+    // doesn't match the current `machine.toml` hash, rebuild the image
+    // first. The image not existing at all also counts as a mismatch.
+    // After rebuild, the existing toml-hash mechanism in ensure_container
+    // will recreate any pre-existing container that was built against
+    // the now-stale image.
+    let machine_cfg = claude_sandbox::machine::require_setup_done()?;
+    let current_machine_hash = claude_sandbox::machine::content_hash(&machine_cfg);
+    let image_machine_hash = claude_sandbox::podman::image::image_machine_hash(podman);
+    if image_machine_hash.as_deref() != Some(current_machine_hash.as_str()) {
+        match image_machine_hash {
+            None => claude_sandbox::step!(
+                "Image missing or has no cs-machine-hash label — building"
+            ),
+            Some(_) => claude_sandbox::step!(
+                "machine.toml changed since image was built — rebuilding image"
+            ),
+        }
+        claude_sandbox::podman::image::rebuild(podman)?;
+    }
+
     let reg = claude_sandbox::registry::load()?;
     let resolved = match reg.entries.get(&name) {
         Some(existing_path) if existing_path != project => {
@@ -337,6 +418,7 @@ fn prepare_container(
             image: &image,
             project_path: project,
             config: &cfg,
+            machine_hash: Some(&current_machine_hash),
         },
     )?;
 

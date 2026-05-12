@@ -64,6 +64,48 @@ pub fn resolve_default_config() -> std::io::Result<ResolvedAsset> {
     resolve(DEFAULT_CONFIG_NAME, EMBEDDED_DEFAULT_CONFIG)
 }
 
+/// State of a user-override copy at `~/.config/claude-sandbox/<name>`.
+/// Drives both the rebuild-time warning and the cfg wizard's
+/// refresh/delete prompt: cleanup paths differ depending on whether
+/// the user-override is identical to the embedded default (no-op
+/// cruft, safe to delete) or a real divergence (could be intentional).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverrideState {
+    /// No file at `~/.config/claude-sandbox/<name>`.
+    Absent,
+    /// File exists and is byte-for-byte identical to the embedded
+    /// default for this binary. Usually means an older `make install`
+    /// auto-deployed an unchanged copy that the user never edited.
+    MatchesEmbedded,
+    /// File exists and differs from the embedded default. Could be a
+    /// manual edit OR a stale auto-deployed copy from an older shipped
+    /// version. Same remediation for both: refresh or delete via the
+    /// cfg wizard.
+    DiffersFromEmbedded,
+}
+
+pub fn user_override_state(name: &str, embedded: &str) -> OverrideState {
+    let path = paths::config_dir().join(name);
+    if !path.is_file() {
+        return OverrideState::Absent;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(contents) if contents == embedded => OverrideState::MatchesEmbedded,
+        Ok(_) => OverrideState::DiffersFromEmbedded,
+        // Unreadable (permissions, race) — treat as absent so a real
+        // override doesn't appear to silently match. Conservative.
+        Err(_) => OverrideState::Absent,
+    }
+}
+
+pub fn dockerfile_override_state() -> OverrideState {
+    user_override_state(DOCKERFILE_NAME, EMBEDDED_DOCKERFILE)
+}
+
+pub fn default_config_override_state() -> OverrideState {
+    user_override_state(DEFAULT_CONFIG_NAME, EMBEDDED_DEFAULT_CONFIG)
+}
+
 /// Copies the embedded defaults into `~/.config/claude-sandbox/`. Used by
 /// the cfg wizard's opt-in "copy defaults for editing" step.
 ///

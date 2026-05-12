@@ -556,72 +556,117 @@ fn run_cfg_desktop_step() -> Result<()> {
     Ok(())
 }
 
-/// Offer to drop editable copies of the embedded Dockerfile and
-/// `config.toml` into `~/.config/claude-sandbox/`. Most users never need
-/// this — the runtime three-tier lookup falls back to the package-shipped
-/// (`/usr/share/claude-sandbox/`) or embedded versions — but users who
-/// want to customise either file (extra Dockerfile RUN steps, global
-/// project defaults) start here.
+/// Per-machine assets step: for each of `Dockerfile` and `config.toml`,
+/// inspect the user-override slot at `~/.config/claude-sandbox/` and
+/// offer the appropriate action. Three cases per file:
+///   - Absent: prompt to copy the embedded default in (opt-in).
+///   - MatchesEmbedded: identical no-op override (typically leftover
+///     from the old `make install`). Offer to delete by default so
+///     stale copies stop overriding future binary upgrades.
+///   - DiffersFromEmbedded: real divergence (manual edit OR stale
+///     pre-flexibility-pass copy). User picks keep / refresh / delete.
 fn run_cfg_assets_step() -> Result<()> {
     use claude_sandbox::assets;
-    use dialoguer::Confirm;
 
     let cfg_dir = paths::config_dir();
-    let dockerfile = cfg_dir.join(assets::DOCKERFILE_NAME);
-    let config = cfg_dir.join(assets::DEFAULT_CONFIG_NAME);
-    let dockerfile_exists = dockerfile.exists();
-    let config_exists = config.exists();
-
-    if dockerfile_exists && config_exists {
-        println!(
-            "==> Editable copies already present at {} — skipping.",
-            cfg_dir.display()
-        );
-        return Ok(());
-    }
-
+    println!("==> Editable defaults under {}:", cfg_dir.display());
     println!(
-        "==> Defaults source-of-truth lives at /usr/share/claude-sandbox/ (when packaged)"
+        "    Defaults live at /usr/share/claude-sandbox/ (when packaged) or are baked"
     );
     println!(
-        "    or is baked into this binary. To customise them, copy editable versions"
-    );
-    println!("    into {} now.", cfg_dir.display());
-    if dockerfile_exists || config_exists {
-        let present = if dockerfile_exists {
-            assets::DOCKERFILE_NAME
-        } else {
-            assets::DEFAULT_CONFIG_NAME
-        };
-        println!("    ({} is already present; only the missing one will be written.)", present);
-    }
-    println!(
-        "    --dangerously-skip-permissions is the default in the container because the"
+        "    into this binary via include_str!. Drop edited copies in ~/.config to override"
     );
     println!(
-        "    container itself is the safety boundary — bypassing Claude's in-app permission"
-    );
-    println!(
-        "    UI is pure ergonomics, the host can't be damaged from inside."
+        "    per-machine — the three-tier runtime lookup picks the user override first."
     );
 
-    let copy = Confirm::new()
-        .with_prompt("Copy editable defaults into ~/.config/claude-sandbox/?")
-        .default(false)
-        .interact()
-        .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
-    if !copy {
-        return Ok(());
-    }
+    handle_one_asset(
+        assets::DOCKERFILE_NAME,
+        &cfg_dir.join(assets::DOCKERFILE_NAME),
+        assets::EMBEDDED_DOCKERFILE,
+        assets::dockerfile_override_state(),
+    )?;
+    handle_one_asset(
+        assets::DEFAULT_CONFIG_NAME,
+        &cfg_dir.join(assets::DEFAULT_CONFIG_NAME),
+        assets::EMBEDDED_DEFAULT_CONFIG,
+        assets::default_config_override_state(),
+    )?;
+    Ok(())
+}
 
-    let written = assets::populate_user_config(false).map_err(|e| {
-        claude_sandbox::error::Error::Other(format!("populating ~/.config: {e}"))
-    })?;
-    if written.is_empty() {
-        println!("    (Nothing copied — all targets already existed.)");
-    } else {
-        for p in written {
-            println!("    Wrote {}.", p.display());
+fn handle_one_asset(
+    label: &str,
+    path: &std::path::Path,
+    embedded: &str,
+    state: claude_sandbox::assets::OverrideState,
+) -> Result<()> {
+    use claude_sandbox::assets::OverrideState;
+    use dialoguer::{Confirm, Select};
+
+    let prompt_err = |e: dialoguer::Error| {
+        claude_sandbox::error::Error::Other(format!("prompt failed: {e}"))
+    };
+    let io_err = |op: &str, p: &std::path::Path, e: std::io::Error| {
+        claude_sandbox::error::Error::Other(format!("{op} {}: {e}", p.display()))
+    };
+
+    match state {
+        OverrideState::Absent => {
+            let copy = Confirm::new()
+                .with_prompt(format!("[{label}] copy editable default into {}?", path.display()))
+                .default(false)
+                .interact()
+                .map_err(prompt_err)?;
+            if copy {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| io_err("mkdir", parent, e))?;
+                }
+                std::fs::write(path, embedded).map_err(|e| io_err("write", path, e))?;
+                println!("    Wrote {}.", path.display());
+            }
+        }
+        OverrideState::MatchesEmbedded => {
+            // Stale-cruft case: an older `make install` deployed this
+            // unchanged. Default "yes, delete" so users who never edited
+            // it stop overriding future binary upgrades by accident.
+            let del = Confirm::new()
+                .with_prompt(format!(
+                    "[{label}] {} is identical to the embedded default (no-op override). Delete?",
+                    path.display()
+                ))
+                .default(true)
+                .interact()
+                .map_err(prompt_err)?;
+            if del {
+                std::fs::remove_file(path).map_err(|e| io_err("delete", path, e))?;
+                println!("    Deleted {}.", path.display());
+            }
+        }
+        OverrideState::DiffersFromEmbedded => {
+            println!(
+                "[{label}] {} differs from this binary's embedded default.",
+                path.display()
+            );
+            let action = Select::new()
+                .item("keep override as-is")
+                .item("refresh from embedded (overwrite local edits)")
+                .item("delete override (binary falls back to embedded)")
+                .default(0)
+                .interact()
+                .map_err(prompt_err)?;
+            match action {
+                0 => println!("    Keeping {}.", path.display()),
+                1 => {
+                    std::fs::write(path, embedded).map_err(|e| io_err("write", path, e))?;
+                    println!("    Refreshed {} from embedded.", path.display());
+                }
+                2 => {
+                    std::fs::remove_file(path).map_err(|e| io_err("delete", path, e))?;
+                    println!("    Deleted {}.", path.display());
+                }
+                _ => unreachable!(),
+            }
         }
     }
     Ok(())

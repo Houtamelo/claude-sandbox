@@ -103,7 +103,14 @@ ENV HOME=$HOSTHOME
 # don't diverge between newer/older versions). Falls back to "stable" if
 # unset — same channel the official installer uses by default.
 ARG CLAUDE_VERSION=stable
-RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION" || true
+# Fail loud if the installer fails: an empty image (no claude on PATH)
+# only surfaces the breakage at first `claude-sandbox` invocation,
+# which is far from the rebuild that caused it. `set -o pipefail` so
+# a failed curl doesn't get swallowed by the pipe to bash.
+RUN set -o pipefail; curl -fsSL https://claude.ai/install.sh \
+    | bash -s -- "$CLAUDE_VERSION" \
+ && test -x "$HOSTHOME/.local/bin/claude" \
+ || (echo "ERROR: claude install failed (version=$CLAUDE_VERSION)" >&2 && exit 1)
 
 WORKDIR /work
 

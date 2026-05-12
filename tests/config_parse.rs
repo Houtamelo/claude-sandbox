@@ -52,6 +52,22 @@ cpus = 4
     assert_eq!(c.limits.cpus, Some(4.0));
 }
 
+#[test]
+fn gpg_agent_defaults_to_none_meaning_off() {
+    // No `gpg_agent` field at all → None → callers `.unwrap_or(false)`
+    // → off. Explicit opt-in only.
+    let tmp = write("name = \"x\"\n");
+    let c = load(&tmp.path().join("c.toml")).unwrap();
+    assert_eq!(c.gpg_agent, None);
+}
+
+#[test]
+fn gpg_agent_can_be_explicit() {
+    let tmp = write("name = \"x\"\ngpg_agent = true\n");
+    let c = load(&tmp.path().join("c.toml")).unwrap();
+    assert_eq!(c.gpg_agent, Some(true));
+}
+
 /// Guards the clean-break removal of the built-in Tailscale feature.
 /// Existing tomls with `[tailscale]` are intentionally broken; the
 /// recipe at docs/recipes/tailscale.md shows how to install it via

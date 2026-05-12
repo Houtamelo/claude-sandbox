@@ -54,11 +54,26 @@ pub struct ImageSpec {
     /// in-image tool set. Other package managers require editing
     /// `assets/Dockerfile` directly.
     pub base: String,
+    /// Extra apt packages baked into the image on top of the small
+    /// hardcoded "core" set (which the sandbox itself depends on:
+    /// ca-certificates, curl, git, sudo, bash, openssh-client, acl,
+    /// pulseaudio-utils, sound-theme-freedesktop, gnupg). Default
+    /// reflects author preference; trim to `[]` for a minimal image
+    /// or extend with `vim`, `tmux`, `ripgrep`, etc.
+    pub extra_packages: Vec<String>,
 }
 
 impl Default for ImageSpec {
     fn default() -> Self {
-        Self { base: "debian:trixie-slim".into() }
+        Self {
+            base: "debian:trixie-slim".into(),
+            extra_packages: vec![
+                "build-essential".into(),
+                "pkg-config".into(),
+                "jq".into(),
+                "direnv".into(),
+            ],
+        }
     }
 }
 

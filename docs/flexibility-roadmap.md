@@ -19,6 +19,8 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 | SELinux opt-out unconditional | Runtime-detected via `/sys/fs/selinux/enforce`. `--security-opt label=disable` only emitted when SELinux is actually loaded; absent on Ubuntu/Mint/vanilla Arch. |
 | GPU vendor (was NVIDIA-only) | `[gpu] vendor` in `machine.toml` — `none` (default), `nvidia`, `amd`, `intel`, or `custom`. cfg wizard probes (`/proc/driver/nvidia`, `/dev/kfd`, `/sys/class/drm/card0/device/vendor`) and pre-fills the prompt. `extra_args = [...]` is appended in every variant, including `none` and `custom`, as an escape hatch for driver-specific quirks. Per-project `gpu: bool` stays the toggle. |
 | Tailscale baked into image | Removed. Was a ~30 MB always-installed package with a Debian-Trixie codename hardcoded in the apt repo URL — penalised non-users and blocked alternate bases. Users who want it follow [docs/recipes/tailscale.md](recipes/tailscale.md) (install via `.claude-sandbox.deps.sh`, run via `on_start` hooks, persist state via `[[mount]]`). Existing tomls with `[tailscale]` get a clean `unknown field` parse error pointing at the recipe. |
+| Hardcoded apt package list | Split into two tiers. **Core** (`ca-certificates curl git sudo bash openssh-client acl pulseaudio-utils sound-theme-freedesktop gnupg`) is fixed in the Dockerfile — these are load-bearing for sandbox features (TLS, claude.ai installer, worktrees, sudo, hooks, SSH/GPG agent forwarding, ACLs, notification audio). **Extras** (`[image] extra_packages` in machine.toml, default = `build-essential pkg-config jq direnv`) is user-configurable via cfg wizard or direct edit. `extra_packages = []` skips the second RUN entirely for a minimal image. |
+| SSH-key-only credential passthrough | Added `gpg_agent: bool` to per-project `.claude-sandbox.toml` (default false). When true and host `~/.gnupg/` exists, bind-mounts the directory rw at the matching in-container path. HOME mirroring means gpg auto-discovers its keyring + agent socket; signing / encryption / decryption all work. Exposes the keyring to the container (consistent with how `~/.claude` is treated). |
 
 ---
 
@@ -29,10 +31,6 @@ Status legend: ✅ done · ▶ in progress · ⏸ planned · 🤔 deferred
 *(All items in this tier are now done. Next major friction point is in Significant.)*
 
 ### Significant (constrains real use cases)
-
-- **Hardcoded apt package list.** `git sudo curl ca-certificates openssh-client build-essential pkg-config jq direnv acl pulseaudio-utils sound-theme-freedesktop` is one author's taste. No override.
-  - *Proposal:* either trim to a minimum-viable set (`git sudo curl ca-certificates openssh-client acl`) and rely on per-project `setup = [...]` for the rest, OR expose `[image] extra_packages = [...]` build arg.
-  - *Scope:* ~45 min depending on direction.
 
 ### Minor (preference / convenience)
 

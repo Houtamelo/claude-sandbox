@@ -258,6 +258,35 @@ fn run_cfg_wizard() -> Result<()> {
         .interact_text()
         .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
 
+    // ---- Extra apt packages baked into the image ----
+    let default_extras: Vec<String> = existing
+        .as_ref()
+        .map(|c| c.image.extra_packages.clone())
+        .unwrap_or_else(|| ImageSpec::default().extra_packages);
+    println!();
+    println!(
+        "    Extra apt packages: installed on top of the core set (ca-certificates"
+    );
+    println!(
+        "    curl git sudo bash openssh-client acl pulseaudio-utils"
+    );
+    println!(
+        "    sound-theme-freedesktop gnupg). Space-separated. Submit blank to"
+    );
+    println!(
+        "    install nothing extra. Default reflects the project's opinionated set."
+    );
+    let raw_extras: String = Input::<String>::new()
+        .with_prompt("extra packages")
+        .default(default_extras.join(" "))
+        .allow_empty(true)
+        .interact_text()
+        .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+    let extra_packages: Vec<String> = raw_extras
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
+
     // ---- GPU vendor ----
     let detected_vendor = gpu_feat::probe();
     let saved_vendor: Option<GpuVendor> = existing.as_ref().map(|c| c.gpu.vendor);
@@ -302,7 +331,7 @@ fn run_cfg_wizard() -> Result<()> {
 
     let new_cfg = MachineConfig {
         host: HostSpec { uid },
-        image: ImageSpec { base },
+        image: ImageSpec { base, extra_packages },
         gpu: GpuSpec { vendor, extra_args },
     };
     let machine_changed = existing.as_ref() != Some(&new_cfg);

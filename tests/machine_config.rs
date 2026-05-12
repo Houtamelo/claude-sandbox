@@ -64,6 +64,41 @@ fn legacy_toml_without_image_section_parses() {
 }
 
 #[test]
+fn default_extra_packages_is_the_curated_set() {
+    // Guards the author-opinionated list. Changing this default
+    // silently rebuilds every existing user's image with a different
+    // package set on next start — make it intentional.
+    let default = ImageSpec::default().extra_packages;
+    assert_eq!(default, vec!["build-essential", "pkg-config", "jq", "direnv"]);
+}
+
+#[test]
+fn extra_packages_can_be_emptied() {
+    // Users opting for a minimal image set `extra_packages = []`. Must
+    // parse cleanly and the EXTRA_PACKAGES build arg ends up empty,
+    // which the Dockerfile's `if [ -n "$EXTRA_PACKAGES" ]` guard skips.
+    let body = "[host]\nuid = 1000\n[image]\nbase = \"debian:trixie-slim\"\nextra_packages = []\n";
+    let c: MachineConfig = toml::from_str(body).expect("parse");
+    assert!(c.image.extra_packages.is_empty());
+}
+
+#[test]
+fn extra_packages_extends_default() {
+    let body = "[host]\nuid = 1000\n[image]\nbase = \"x\"\nextra_packages = [\"vim\", \"tmux\"]\n";
+    let c: MachineConfig = toml::from_str(body).expect("parse");
+    assert_eq!(c.image.extra_packages, vec!["vim", "tmux"]);
+}
+
+#[test]
+fn legacy_image_section_without_extra_packages_keeps_default() {
+    // Back-compat: pre-extra_packages tomls have only `base` under
+    // [image]. The deserializer must fill in the default extras.
+    let body = "[host]\nuid = 1000\n[image]\nbase = \"debian:trixie-slim\"\n";
+    let c: MachineConfig = toml::from_str(body).expect("parse");
+    assert_eq!(c.image.extra_packages, ImageSpec::default().extra_packages);
+}
+
+#[test]
 fn config_round_trips_through_toml() {
     let mut c = cfg(1234);
     c.image.base = "linuxmintd/mint22-amd64".into();

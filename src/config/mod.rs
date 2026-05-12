@@ -23,6 +23,12 @@ pub struct ConfigFile {
     pub env_file: Option<String>,
 
     pub ssh_agent: Option<bool>,
+    /// Forward the host's GPG home (`~/.gnupg/`) into the container at
+    /// the matching path, rw. Default `false` because most projects
+    /// don't need GPG and forwarding exposes the private keyring to
+    /// the container. Set `gpg_agent = true` to enable for projects
+    /// that sign commits / encrypt artefacts.
+    pub gpg_agent: Option<bool>,
     pub network: Option<String>,
     #[serde(default)]
     pub ports: Vec<String>,
@@ -82,6 +88,9 @@ impl ConfigFile {
         }
         if other.ssh_agent.is_some() {
             self.ssh_agent = other.ssh_agent;
+        }
+        if other.gpg_agent.is_some() {
+            self.gpg_agent = other.gpg_agent;
         }
         if other.network.is_some() {
             self.network = other.network;

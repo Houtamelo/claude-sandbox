@@ -32,6 +32,7 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     let machine_cfg = crate::machine::require_setup_done()?;
     let host_uid = machine_cfg.host.uid;
     let base_image = machine_cfg.image.base.clone();
+    let extra_packages = machine_cfg.image.extra_packages.join(" ");
     let machine_hash = crate::machine::content_hash(&machine_cfg);
     let res = podman.run_inherit(&[
         "build".into(),
@@ -47,6 +48,8 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
         format!("HOSTUID={host_uid}"),
         "--build-arg".into(),
         format!("CS_MACHINE_HASH={machine_hash}"),
+        "--build-arg".into(),
+        format!("EXTRA_PACKAGES={extra_packages}"),
         "-f".into(),
         dockerfile.display().to_string(),
         config_dir.display().to_string(),

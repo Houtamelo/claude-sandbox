@@ -7,11 +7,34 @@ FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Core package set — load-bearing for the sandbox itself. Removing
+# anything here breaks a sandbox feature:
+#   ca-certificates → TLS for the claude installer + any HTTPS
+#   curl            → claude.ai installer below
+#   git             → cs worktree feature
+#   sudo            → the sandbox's escalation model
+#   bash            → login shell, cs wrapper, hook scripts
+#   openssh-client  → SSH agent forwarding (ssh_agent = true)
+#   acl             → grant_acls (setfacl) on every container start
+#   pulseaudio-utils + sound-theme-freedesktop → notification audio
+#                     (paplay + the sound files it plays)
+#   gnupg           → gpg-agent forwarding (gpg_agent = true)
+# Not configurable — these are the sandbox's runtime contract.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git sudo bash openssh-client \
-      build-essential pkg-config jq direnv acl \
-      pulseaudio-utils sound-theme-freedesktop \
+      ca-certificates curl git sudo bash openssh-client acl \
+      pulseaudio-utils sound-theme-freedesktop gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Extra packages from `[image] extra_packages` in machine.toml.
+# Space-separated string; word-split is intentional. Skipped entirely
+# when the list is empty so users opting for a minimal image don't
+# pay for an unused apt-get update layer.
+ARG EXTRA_PACKAGES=""
+RUN if [ -n "$EXTRA_PACKAGES" ]; then \
+        apt-get update && \
+        apt-get install -y --no-install-recommends $EXTRA_PACKAGES && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Non-root user that Claude actually runs as. Claude refuses to honour
 # --dangerously-skip-permissions for any UID 0 process; the sandbox model

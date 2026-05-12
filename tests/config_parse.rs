@@ -2,7 +2,7 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use claude_sandbox::config::parse::load;
+use claude_sandbox::config::parse::{load, load_from_str};
 use claude_sandbox::config::ConfigFile;
 
 fn write(content: &str) -> tempfile::TempDir {
@@ -154,6 +154,55 @@ fn rejects_bad_port() {
 fn rejects_bad_network() {
     let tmp = write("network = \"weird\"\n");
     assert!(load(&tmp.path().join("c.toml")).is_err());
+}
+
+#[test]
+fn load_from_str_parses_in_memory_toml() {
+    // load_from_str is the string-source equivalent of `load(path)` —
+    // used by load_global_merged when the global config lives in
+    // /usr/share/claude-sandbox/ or is embedded into the binary.
+    let c = load_from_str("name = \"y\"\nssh_agent = true\n", "<test>").unwrap();
+    assert_eq!(c.name.as_deref(), Some("y"));
+    assert_eq!(c.ssh_agent, Some(true));
+}
+
+#[test]
+fn load_from_str_parse_error_quotes_source_label() {
+    // Bad TOML must surface the source_label so error messages point at
+    // the embedded copy / /usr/share file the user can actually inspect,
+    // not at a tempfile path or nothing at all.
+    let e = load_from_str("name = \"unterminated", "<embedded default-config.toml>").unwrap_err();
+    let msg = format!("{e}");
+    assert!(
+        msg.contains("<embedded default-config.toml>"),
+        "error must include source_label so users can find the bad file; got: {msg}"
+    );
+}
+
+#[test]
+fn load_from_str_validation_error_quotes_source_label() {
+    // Validation errors (e.g. relative mount target) also flow through
+    // the source_label so the user sees where the misconfigured value
+    // lives.
+    let body = r#"mount = [{ host = "/x", container = "relative" }]"#;
+    let e = load_from_str(body, "/usr/share/claude-sandbox/config.toml").unwrap_err();
+    let msg = format!("{e}");
+    assert!(
+        msg.contains("/usr/share/claude-sandbox/config.toml"),
+        "validation error must include source_label; got: {msg}"
+    );
+    assert!(
+        msg.contains("must be absolute"),
+        "must still surface the underlying validation message; got: {msg}"
+    );
+}
+
+#[test]
+fn load_from_str_rejects_unknown_fields_like_load() {
+    // Same deny_unknown_fields semantics as the path-based `load()` —
+    // catching typos in /usr/share or ~/.config copies before they
+    // silently drop config.
+    assert!(load_from_str("name = \"x\"\ntypo = 1\n", "<test>").is_err());
 }
 
 #[test]

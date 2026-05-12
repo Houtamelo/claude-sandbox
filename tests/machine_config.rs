@@ -1,33 +1,67 @@
-use claude_sandbox::machine::{content_hash, HostSpec, MachineConfig};
+use claude_sandbox::machine::{content_hash, HostSpec, ImageSpec, MachineConfig};
+
+fn cfg(uid: u32) -> MachineConfig {
+    MachineConfig {
+        host: HostSpec { uid },
+        image: ImageSpec::default(),
+    }
+}
 
 #[test]
 fn hash_is_deterministic_across_calls() {
-    let cfg = MachineConfig {
-        host: HostSpec { uid: 1000 },
-    };
-    let h1 = content_hash(&cfg);
-    let h2 = content_hash(&cfg);
+    let c = cfg(1000);
+    let h1 = content_hash(&c);
+    let h2 = content_hash(&c);
     assert_eq!(h1, h2, "FNV-1a hash must be deterministic");
     assert_eq!(h1.len(), 16, "hex digest should be 16 chars (u64)");
 }
 
 #[test]
 fn hash_differs_when_uid_differs() {
-    let a = MachineConfig { host: HostSpec { uid: 1000 } };
-    let b = MachineConfig { host: HostSpec { uid: 1001 } };
     assert_ne!(
-        content_hash(&a),
-        content_hash(&b),
+        content_hash(&cfg(1000)),
+        content_hash(&cfg(1001)),
         "hash must change when host.uid changes — otherwise auto-rebuild won't fire"
     );
 }
 
 #[test]
+fn hash_differs_when_base_image_differs() {
+    let mut a = cfg(1000);
+    let mut b = cfg(1000);
+    b.image.base = "ubuntu:24.04".into();
+    assert_ne!(content_hash(&a), content_hash(&b));
+    // sanity: identical struct → identical hash
+    a.image.base = "ubuntu:24.04".into();
+    assert_eq!(content_hash(&a), content_hash(&b));
+}
+
+#[test]
+fn default_image_base_is_debian_trixie_slim() {
+    // The default is load-bearing: existing machine.toml files predating
+    // the [image] section deserialize with this value. Changing it
+    // silently would invalidate every existing user's container.
+    assert_eq!(ImageSpec::default().base, "debian:trixie-slim");
+}
+
+#[test]
+fn legacy_toml_without_image_section_parses() {
+    // Back-compat: users who configured machine.toml before the [image]
+    // section existed must keep loading cleanly. `#[serde(default)]` on
+    // the field is what makes this work.
+    let body = "[host]\nuid = 1000\n";
+    let c: MachineConfig = toml::from_str(body).expect("legacy toml should parse");
+    assert_eq!(c.host.uid, 1000);
+    assert_eq!(c.image, ImageSpec::default());
+}
+
+#[test]
 fn config_round_trips_through_toml() {
-    let cfg = MachineConfig { host: HostSpec { uid: 1234 } };
-    let s = toml::to_string(&cfg).expect("serialize");
+    let mut c = cfg(1234);
+    c.image.base = "linuxmintd/mint22-amd64".into();
+    let s = toml::to_string(&c).expect("serialize");
     let back: MachineConfig = toml::from_str(&s).expect("deserialize");
-    assert_eq!(cfg, back);
+    assert_eq!(c, back);
 }
 
 #[test]

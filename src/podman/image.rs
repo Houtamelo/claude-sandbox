@@ -25,17 +25,20 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
     // different notifications (e.g. 2.1.138 vs 2.1.126 differ on skill-listing
     // truncation behavior). Falls back to "stable" if no host claude.
     let host_claude_version = detect_host_claude_version().unwrap_or_else(|| "stable".into());
-    // Host UID + machine.toml hash come from `claude-sandbox cfg`. We
-    // require setup at this layer too — `rebuild` is rejected by the
-    // gate in main.rs before we get here, but be defensive in case
-    // someone calls the library directly.
+    // Host UID + base image + machine.toml hash come from
+    // `claude-sandbox cfg`. We require setup at this layer too —
+    // `rebuild` is rejected by the gate in main.rs before we get here,
+    // but be defensive in case someone calls the library directly.
     let machine_cfg = crate::machine::require_setup_done()?;
     let host_uid = machine_cfg.host.uid;
+    let base_image = machine_cfg.image.base.clone();
     let machine_hash = crate::machine::content_hash(&machine_cfg);
     let res = podman.run_inherit(&[
         "build".into(),
         "-t".into(),
         "claude-sandbox:0.1".into(),
+        "--build-arg".into(),
+        format!("BASE_IMAGE={base_image}"),
         "--build-arg".into(),
         format!("HOSTHOME={host_home}"),
         "--build-arg".into(),

@@ -1,4 +1,11 @@
-FROM debian:trixie-slim
+# Default base; overridable via `--build-arg BASE_IMAGE=...` (set from
+# `[image] base` in machine.toml). Must be apt-based — the Tailscale
+# install layer below hardcodes a Debian-Trixie codename and `apt-get`
+# is assumed throughout. Non-Debian apt distros (Ubuntu, Mint) work for
+# everything else; the Tailscale layer will fail on them unless you
+# stay on `debian:trixie-slim`.
+ARG BASE_IMAGE=debian:trixie-slim
+FROM ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 

@@ -24,6 +24,11 @@ use crate::paths;
 #[serde(deny_unknown_fields)]
 pub struct MachineConfig {
     pub host: HostSpec,
+    /// Image-build settings. Optional in the on-disk schema so
+    /// machine.toml files predating this section still parse cleanly;
+    /// `#[serde(default)]` fills in the canonical Debian Trixie value.
+    #[serde(default)]
+    pub image: ImageSpec,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +38,25 @@ pub struct HostSpec {
     /// the host UID running claude-sandbox so bind-mounted files map
     /// 1:1 through the user namespace.
     pub uid: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, default)]
+pub struct ImageSpec {
+    /// The `FROM` line of the in-house Dockerfile, e.g. `debian:trixie-slim`
+    /// (default), `ubuntu:24.04`, `linuxmintd/mint22-amd64`. Currently
+    /// must be apt-based: the Dockerfile hardcodes `apt-get install …`
+    /// and a Debian-codename Tailscale repo. Non-Debian apt distros
+    /// (Ubuntu, Mint) work but the Tailscale install layer will fail
+    /// on rebuild — disable Tailscale or stay on Debian Trixie if you
+    /// need it baked into the image.
+    pub base: String,
+}
+
+impl Default for ImageSpec {
+    fn default() -> Self {
+        Self { base: "debian:trixie-slim".into() }
+    }
 }
 
 pub fn path() -> PathBuf {

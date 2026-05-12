@@ -217,7 +217,7 @@ fn run_host() -> Result<()> {
 /// Today: just the host UID. Future steps will land here in order
 /// (SELinux, GPU vendor, image base, …).
 fn run_cfg_wizard() -> Result<()> {
-    use claude_sandbox::machine::{self, HostSpec, MachineConfig};
+    use claude_sandbox::machine::{self, HostSpec, ImageSpec, MachineConfig};
     use dialoguer::{Confirm, Input, Password};
 
     let existing = if machine::exists() { machine::load().ok() } else { None };
@@ -239,7 +239,34 @@ fn run_cfg_wizard() -> Result<()> {
         .interact_text()
         .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
 
-    let new_cfg = MachineConfig { host: HostSpec { uid } };
+    // ---- Base image (Dockerfile FROM line) ----
+    let default_base: String = existing
+        .as_ref()
+        .map(|c| c.image.base.clone())
+        .unwrap_or_else(|| ImageSpec::default().base);
+    println!();
+    println!(
+        "    Base image: which OCI image the sandbox is built from. Must be apt-based"
+    );
+    println!(
+        "    (Debian / Ubuntu / Mint). The Tailscale install layer is hardcoded for"
+    );
+    println!(
+        "    Debian Trixie — non-Debian users may see `apt-get install tailscale` fail"
+    );
+    println!(
+        "    on rebuild; everything else works."
+    );
+    let base: String = Input::<String>::new()
+        .with_prompt("base image")
+        .default(default_base.clone())
+        .interact_text()
+        .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+
+    let new_cfg = MachineConfig {
+        host: HostSpec { uid },
+        image: ImageSpec { base },
+    };
     let machine_changed = existing.as_ref() != Some(&new_cfg);
     machine::save(&new_cfg)?;
 

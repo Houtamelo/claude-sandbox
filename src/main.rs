@@ -218,7 +218,7 @@ fn run_host() -> Result<()> {
 /// (SELinux, GPU vendor, image base, …).
 fn run_cfg_wizard() -> Result<()> {
     use claude_sandbox::machine::{self, HostSpec, MachineConfig};
-    use dialoguer::Input;
+    use dialoguer::{Confirm, Input, Password};
 
     let existing = if machine::exists() { machine::load().ok() } else { None };
 
@@ -240,17 +240,81 @@ fn run_cfg_wizard() -> Result<()> {
         .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
 
     let new_cfg = MachineConfig { host: HostSpec { uid } };
-    let changed = existing.as_ref() != Some(&new_cfg);
+    let machine_changed = existing.as_ref() != Some(&new_cfg);
     machine::save(&new_cfg)?;
 
-    println!("\nSaved {}.", machine::path().display());
-    if changed {
-        println!(
-            "Configuration changed — run `claude-sandbox rebuild` to update the \
-             image. Existing containers will be auto-recreated on next start \
-             (named home volume survives)."
-        );
+    // ---- OAuth token (separate file from machine.toml) ----
+    //
+    // The token is a year-long, doesn't-rotate-on-use credential. Sharing
+    // a single `.credentials.json` between host + multiple containers
+    // triggers OAuth refresh-token rotation collisions; passing the token
+    // via env var per-container sidesteps that entirely.
+    let token_already = machine::oauth_token_exists();
+    let want_token = if token_already {
+        Confirm::new()
+            .with_prompt("OAuth token already configured. Replace it?")
+            .default(false)
+            .interact()
+            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?
     } else {
+        Confirm::new()
+            .with_prompt(
+                "Set up a long-lived OAuth token so containers don't share \
+                 your auth file with the host? (recommended)",
+            )
+            .default(true)
+            .interact()
+            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?
+    };
+
+    let oauth_changed = if want_token {
+        println!();
+        println!(
+            "    Run `claude setup-token` in another terminal — it opens a browser,"
+        );
+        println!(
+            "    walks you through OAuth, and prints a token starting with `sk-ant-oat01-`."
+        );
+        println!("    Paste it below (input is hidden):\n");
+        let token: String = Password::new()
+            .with_prompt("OAuth token")
+            .interact()
+            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+        let trimmed = token.trim();
+        if !trimmed.starts_with("sk-ant-") {
+            return Err(claude_sandbox::error::Error::Other(
+                "that doesn't look like a Claude Code OAuth token \
+                 (expected to start with `sk-ant-`). Aborting; existing token \
+                 (if any) is unchanged."
+                    .into(),
+            ));
+        }
+        let prev_hash = machine::oauth_token_hash();
+        machine::save_oauth_token(trimmed)?;
+        let new_hash = machine::oauth_token_hash();
+        prev_hash != new_hash
+    } else {
+        false
+    };
+
+    println!("\nSaved {}.", machine::path().display());
+    if want_token {
+        println!("Saved {}.", machine::oauth_token_path().display());
+    }
+
+    if machine_changed || oauth_changed {
+        println!();
+        println!(
+            "Configuration changed — existing containers will be auto-recreated on \
+             next start (named home volume survives)."
+        );
+        if machine_changed {
+            println!(
+                "    Run `claude-sandbox rebuild` if you want to refresh the image now; \
+                 otherwise the next `start` will trigger it."
+            );
+        }
+    } else if existing.is_some() {
         println!("No changes.");
     }
     Ok(())
@@ -397,6 +461,12 @@ fn prepare_container(
         claude_sandbox::podman::image::rebuild(podman)?;
     }
 
+    // Load the optional OAuth token (None = user hasn't run `cfg`'s token
+    // step yet; container falls back to the bind-mounted .credentials.json
+    // for auth). Hash always exists — empty-file sentinel covers absent.
+    let oauth_token = claude_sandbox::machine::load_oauth_token()?;
+    let current_oauth_hash = claude_sandbox::machine::oauth_token_hash();
+
     let reg = claude_sandbox::registry::load()?;
     let resolved = match reg.entries.get(&name) {
         Some(existing_path) if existing_path != project => {
@@ -419,6 +489,8 @@ fn prepare_container(
             project_path: project,
             config: &cfg,
             machine_hash: Some(&current_machine_hash),
+            oauth_hash: Some(&current_oauth_hash),
+            oauth_token: oauth_token.as_deref(),
         },
     )?;
 

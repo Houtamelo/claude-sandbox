@@ -81,6 +81,8 @@ fn create_via_lib(sb: &Sandbox) {
             project_path: sb.path(),
             config: &cfg,
             machine_hash: None,
+            oauth_hash: None,
+            oauth_token: None,
         },
     )
     .expect("ensure_container");

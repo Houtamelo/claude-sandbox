@@ -30,6 +30,7 @@ fn create_args_baseline() {
         extra: &[],
         toml_hash: None,
         machine_hash: None,
+        oauth_hash: None,
     };
 
     let args = create_args(&spec);
@@ -71,6 +72,7 @@ fn create_args_with_ports_and_ro_mount() {
         extra: &[],
         toml_hash: None,
         machine_hash: None,
+        oauth_hash: None,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"/etc/foo:/etc/foo:ro".into()));
@@ -92,6 +94,7 @@ fn create_args_includes_toml_hash_label_when_set() {
         extra: &[],
         toml_hash: Some("deadbeefcafef00d"),
         machine_hash: None,
+        oauth_hash: None,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"cs-toml-hash=deadbeefcafef00d".into()));
@@ -111,12 +114,33 @@ fn create_args_omits_toml_hash_label_when_none() {
         extra: &[],
         toml_hash: None,
         machine_hash: None,
+        oauth_hash: None,
     };
     let args = create_args(&spec);
     // No cs-toml-hash=... entry. The discovery label cs-managed=1 is
     // still expected (that's unconditional).
     assert!(!args.iter().any(|a| a.starts_with("cs-toml-hash=")));
     assert!(args.contains(&"cs-managed=1".into()));
+}
+
+#[test]
+fn create_args_includes_oauth_hash_label_when_set() {
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x",
+        image: "i:1",
+        volumes: &[],
+        env: &[],
+        network: "bridge",
+        ports: &[],
+        workdir: &workdir,
+        extra: &[],
+        toml_hash: None,
+        machine_hash: None,
+        oauth_hash: Some("0123456789abcdef"),
+    };
+    let args = create_args(&spec);
+    assert!(args.contains(&"cs-oauth-hash=0123456789abcdef".into()));
 }
 
 #[test]

@@ -22,6 +22,11 @@ pub struct CreateSpec<'a> {
     /// rm+recreate path. Always Some(_) in production (the gate
     /// guarantees machine.toml exists); tests can pass None.
     pub machine_hash: Option<&'a str>,
+    /// Content hash of the OAuth token file (or sentinel for absent).
+    /// Separate label `cs-oauth-hash` so rotating the token triggers a
+    /// recreate (env vars are baked at create time) but NOT an image
+    /// rebuild (the token doesn't appear in the Dockerfile).
+    pub oauth_hash: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +65,10 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
     if let Some(h) = spec.machine_hash {
         v.push("--label".into());
         v.push(format!("cs-machine-hash={h}"));
+    }
+    if let Some(h) = spec.oauth_hash {
+        v.push("--label".into());
+        v.push(format!("cs-oauth-hash={h}"));
     }
     for vol in spec.volumes {
         v.push("--volume".into());

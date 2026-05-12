@@ -52,6 +52,15 @@ pub struct CreateOptions<'a> {
     /// future SELinux/GPU sections) and trigger rm+recreate. `None` in
     /// tests that bypass the machine.toml gate.
     pub machine_hash: Option<&'a str>,
+    /// Current OAuth-token-file content hash. Separate label
+    /// (`cs-oauth-hash`) so rotating the token triggers a container
+    /// recreate without forcing an image rebuild. `None` in tests.
+    pub oauth_hash: Option<&'a str>,
+    /// The OAuth token itself, if configured. Injected into the
+    /// container env as `CLAUDE_CODE_OAUTH_TOKEN` at create time so
+    /// the in-container claude binary authenticates directly via env
+    /// (per-container auth, no shared `.credentials.json` rotation).
+    pub oauth_token: Option<&'a str>,
 }
 
 pub fn run_setup(
@@ -173,31 +182,34 @@ pub fn grant_acls(
 pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     let current_toml_hash = toml_content_hash(opts.project_path);
     let current_machine_hash = opts.machine_hash.map(|s| s.to_string());
+    let current_oauth_hash = opts.oauth_hash.map(|s| s.to_string());
     if podman.container_exists(opts.name)? {
-        // Recreate the container if EITHER the project's `.claude-sandbox.toml`
-        // OR the machine's `machine.toml` content has changed since this
-        // container was built — both are baked in at create time (mounts,
-        // env, ports, image labels, etc.) and re-reading the toml is
-        // useless without a recreate. Named home volume (`cs-<name>-home`)
-        // is preserved across recreate because `rm --volumes` only drops
-        // anonymous volumes.
+        // Recreate the container if ANY of the three hashes (project toml,
+        // machine.toml, oauth token) drifts from the container's baked-in
+        // labels. Each maps to a different kind of config we can't change
+        // on a running container: project toml = mounts/env/ports, machine
+        // = UID and other build args, oauth = injected env var. Named home
+        // volume (`cs-<name>-home`) is preserved across recreate because
+        // `rm --volumes` only drops anonymous volumes.
         let existing_toml = container_label(podman, opts.name, "cs-toml-hash")
             .unwrap_or(None);
         let existing_machine = container_label(podman, opts.name, "cs-machine-hash")
             .unwrap_or(None);
+        let existing_oauth = container_label(podman, opts.name, "cs-oauth-hash")
+            .unwrap_or(None);
         let toml_changed = existing_toml.as_deref() != current_toml_hash.as_deref();
         let machine_changed = existing_machine.as_deref() != current_machine_hash.as_deref();
-        if !toml_changed && !machine_changed {
+        let oauth_changed = existing_oauth.as_deref() != current_oauth_hash.as_deref();
+        if !toml_changed && !machine_changed && !oauth_changed {
             return Ok(false);
         }
-        let reason = match (toml_changed, machine_changed) {
-            (true, true) => "project config + machine config changed",
-            (true, false) => "project .claude-sandbox.toml changed",
-            (false, true) => "machine.toml changed",
-            (false, false) => unreachable!(),
-        };
+        let mut reasons: Vec<&str> = Vec::new();
+        if toml_changed { reasons.push("project .claude-sandbox.toml"); }
+        if machine_changed { reasons.push("machine.toml"); }
+        if oauth_changed { reasons.push("oauth token"); }
         crate::step!(
-            "{reason} — recreating container (named home volume survives)"
+            "{} changed — recreating container (named home volume survives)",
+            reasons.join(" + ")
         );
         podman.run(&crate::podman::args::rm_args(opts.name))?;
         let _ = crate::registry::remove(opts.name);
@@ -227,6 +239,13 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     if opts.config.ssh_agent.unwrap_or(true) {
         env::ensure_ssh_agent(&mut env_pairs, &mut volumes);
     }
+    // Inject the long-lived OAuth token if the user configured one via
+    // `claude-sandbox cfg`. Higher precedence than the bind-mounted
+    // `.credentials.json`, so the container authenticates from env and
+    // never touches/rotates the host's credentials file.
+    if let Some(token) = opts.oauth_token {
+        env_pairs.push(("CLAUDE_CODE_OAUTH_TOKEN".into(), token.to_string()));
+    }
 
     assert_no_target_collisions(&volumes)?;
 
@@ -255,6 +274,7 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         extra: &gpu_extras,
         toml_hash: current_toml_hash.as_deref(),
         machine_hash: current_machine_hash.as_deref(),
+        oauth_hash: current_oauth_hash.as_deref(),
     };
     podman.run(&create_args(&spec))?;
     let _ = crate::registry::upsert(opts.name, opts.project_path);

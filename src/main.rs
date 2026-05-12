@@ -4,7 +4,7 @@ use clap::Parser;
 
 use claude_sandbox::cli::{CsCli, Cmd, HostCli};
 use claude_sandbox::container::{exec::exec_into, lifecycle, status as st};
-use claude_sandbox::config::{edit as cfg_edit, load_merged, ConfigFile};
+use claude_sandbox::config::{edit as cfg_edit, load_global_merged, ConfigFile};
 use claude_sandbox::error::Result;
 use claude_sandbox::paths;
 use claude_sandbox::podman::runner::Podman;
@@ -15,8 +15,7 @@ const DEFAULT_IMAGE: &str = "claude-sandbox:0.1";
 
 fn load_cfg(project: &std::path::Path) -> Result<ConfigFile> {
     let toml_path = project.join(".claude-sandbox.toml");
-    let global = paths::config_dir().join("config.toml");
-    load_merged(Some(&global), if toml_path.exists() { Some(&toml_path) } else { None })
+    load_global_merged(if toml_path.exists() { Some(&toml_path) } else { None })
 }
 
 /// Resolve the effective `claude` flags for this launch. Per-project
@@ -470,6 +469,10 @@ fn run_cfg_wizard() -> Result<()> {
     println!();
     run_cfg_desktop_step()?;
 
+    // ---- Copy embedded defaults to ~/.config for editing ----
+    println!();
+    run_cfg_assets_step()?;
+
     if machine_changed || oauth_changed {
         println!();
         println!(
@@ -548,6 +551,77 @@ fn run_cfg_desktop_step() -> Result<()> {
             println!(
                 "    if you want to wire one up manually on a non-standard setup."
             );
+        }
+    }
+    Ok(())
+}
+
+/// Offer to drop editable copies of the embedded Dockerfile and
+/// `config.toml` into `~/.config/claude-sandbox/`. Most users never need
+/// this — the runtime three-tier lookup falls back to the package-shipped
+/// (`/usr/share/claude-sandbox/`) or embedded versions — but users who
+/// want to customise either file (extra Dockerfile RUN steps, global
+/// project defaults) start here.
+fn run_cfg_assets_step() -> Result<()> {
+    use claude_sandbox::assets;
+    use dialoguer::Confirm;
+
+    let cfg_dir = paths::config_dir();
+    let dockerfile = cfg_dir.join(assets::DOCKERFILE_NAME);
+    let config = cfg_dir.join(assets::DEFAULT_CONFIG_NAME);
+    let dockerfile_exists = dockerfile.exists();
+    let config_exists = config.exists();
+
+    if dockerfile_exists && config_exists {
+        println!(
+            "==> Editable copies already present at {} — skipping.",
+            cfg_dir.display()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "==> Defaults source-of-truth lives at /usr/share/claude-sandbox/ (when packaged)"
+    );
+    println!(
+        "    or is baked into this binary. To customise them, copy editable versions"
+    );
+    println!("    into {} now.", cfg_dir.display());
+    if dockerfile_exists || config_exists {
+        let present = if dockerfile_exists {
+            assets::DOCKERFILE_NAME
+        } else {
+            assets::DEFAULT_CONFIG_NAME
+        };
+        println!("    ({} is already present; only the missing one will be written.)", present);
+    }
+    println!(
+        "    --dangerously-skip-permissions is the default in the container because the"
+    );
+    println!(
+        "    container itself is the safety boundary — bypassing Claude's in-app permission"
+    );
+    println!(
+        "    UI is pure ergonomics, the host can't be damaged from inside."
+    );
+
+    let copy = Confirm::new()
+        .with_prompt("Copy editable defaults into ~/.config/claude-sandbox/?")
+        .default(false)
+        .interact()
+        .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
+    if !copy {
+        return Ok(());
+    }
+
+    let written = assets::populate_user_config(false).map_err(|e| {
+        claude_sandbox::error::Error::Other(format!("populating ~/.config: {e}"))
+    })?;
+    if written.is_empty() {
+        println!("    (Nothing copied — all targets already existed.)");
+    } else {
+        for p in written {
+            println!("    Wrote {}.", p.display());
         }
     }
     Ok(())
@@ -677,8 +751,7 @@ fn prepare_container(
     }
 
     claude_sandbox::step!("Loading configuration");
-    let global = paths::config_dir().join("config.toml");
-    let cfg = load_merged(Some(&global), Some(&toml_path))?;
+    let cfg = load_global_merged(Some(&toml_path))?;
     let name = cfg.name.clone().unwrap_or_else(|| derived_name.to_string());
 
     // Machine-side check: if the local image's `cs-machine-hash` label

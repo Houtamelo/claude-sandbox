@@ -140,3 +140,27 @@ pub fn load_merged(global: Option<&std::path::Path>, local: Option<&std::path::P
     }
     Ok(cfg)
 }
+
+/// Like [`load_merged`] but the global side is resolved through the
+/// three-tier asset lookup (user override -> system install -> embedded)
+/// instead of a single path. `local` is the per-project
+/// `.claude-sandbox.toml`.
+pub fn load_global_merged(local: Option<&std::path::Path>) -> crate::error::Result<ConfigFile> {
+    let mut cfg = ConfigFile::default();
+    let resolved = crate::assets::resolve_default_config()
+        .map_err(|e| crate::error::Error::Config(format!("resolving global config: {e}")))?;
+    let source_label = match &resolved.source {
+        crate::assets::AssetSource::UserOverride(p) | crate::assets::AssetSource::System(p) => {
+            p.display().to_string()
+        }
+        crate::assets::AssetSource::Embedded => "<embedded default-config.toml>".to_string(),
+    };
+    let g = parse::load_from_str(&resolved.contents, &source_label)?;
+    cfg.merge_in(g);
+    if let Some(p) = local {
+        if let Some(l) = parse::load_optional(p)? {
+            cfg.merge_in(l);
+        }
+    }
+    Ok(cfg)
+}

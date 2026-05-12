@@ -4,17 +4,32 @@ use crate::podman::runner::Podman;
 use crate::registry;
 
 pub fn rebuild(podman: &Podman) -> Result<()> {
-    let config_dir = paths::config_dir();
-    let dockerfile = config_dir.join("Dockerfile");
+    // Build context lives in the cache dir, not in ~/.config — keeps the
+    // user-override slot (`~/.config/claude-sandbox/`) free of transient
+    // files. Re-created each rebuild to guarantee no stale binary/Dockerfile.
+    let build_dir = paths::cache_dir().join("build");
+    if build_dir.exists() {
+        std::fs::remove_dir_all(&build_dir)?;
+    }
+    std::fs::create_dir_all(&build_dir)?;
+
+    // Resolve the Dockerfile through the three-tier lookup
+    // (user override -> /usr/share/claude-sandbox/ -> embedded). Write
+    // the resolved contents into the build context so podman sees them
+    // regardless of which tier provided them.
+    let dockerfile_asset = crate::assets::resolve_dockerfile()?;
+    let dockerfile = build_dir.join("Dockerfile");
+    std::fs::write(&dockerfile, &dockerfile_asset.contents)?;
+
     // Copy our own binary alongside the Dockerfile so `COPY claude-sandbox ...` succeeds.
     let bin_src = std::env::current_exe()?;
-    let bin_dst = config_dir.join("claude-sandbox");
+    let bin_dst = build_dir.join("claude-sandbox");
     std::fs::copy(&bin_src, &bin_dst)?;
     // Sandbox-self-awareness CLAUDE.md baked into the image at /CLAUDE.md.
     // We embed it in the binary so rebuilds always pick up the latest version,
     // and write it to the build context alongside the binary so the COPY in
     // the Dockerfile can pick it up.
-    let claude_md_dst = config_dir.join("CLAUDE.md");
+    let claude_md_dst = build_dir.join("CLAUDE.md");
     std::fs::write(&claude_md_dst, include_str!("../../assets/CLAUDE.md"))?;
     // Pass the host's HOME so the image's `claude` user has a matching home
     // path. Claude Code's setup-state cache is keyed by HOME — if the
@@ -52,10 +67,10 @@ pub fn rebuild(podman: &Podman) -> Result<()> {
         format!("EXTRA_PACKAGES={extra_packages}"),
         "-f".into(),
         dockerfile.display().to_string(),
-        config_dir.display().to_string(),
+        build_dir.display().to_string(),
     ]);
-    let _ = std::fs::remove_file(&bin_dst);
-    let _ = std::fs::remove_file(&claude_md_dst);
+    // build_dir is in the cache; leave it for inspection on failure and
+    // we'll wipe + recreate on the next rebuild call.
     res
 }
 

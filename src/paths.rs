@@ -12,6 +12,10 @@ pub fn data_dir() -> PathBuf {
     home().join(".local/share/claude-sandbox")
 }
 
+pub fn cache_dir() -> PathBuf {
+    home().join(".cache/claude-sandbox")
+}
+
 pub fn expand(input: &str) -> String {
     let mut s = input.to_string();
     if let Some(rest) = s.strip_prefix("~/") {

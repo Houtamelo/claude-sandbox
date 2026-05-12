@@ -8,10 +8,7 @@ use super::ConfigFile;
 pub fn load(path: &Path) -> Result<ConfigFile> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| Error::Config(format!("reading {}: {e}", path.display())))?;
-    let cfg: ConfigFile = toml::from_str(&raw)
-        .map_err(|e| Error::Config(format!("parsing {}: {e}", path.display())))?;
-    validate(&cfg, path)?;
-    Ok(cfg)
+    load_from_str(&raw, &path.display().to_string())
 }
 
 pub fn load_optional(path: &Path) -> Result<Option<ConfigFile>> {
@@ -19,6 +16,15 @@ pub fn load_optional(path: &Path) -> Result<Option<ConfigFile>> {
         return Ok(None);
     }
     load(path).map(Some)
+}
+
+/// Parse + validate a config from an in-memory string. `source_label` is
+/// used only in error messages (e.g. `<embedded>`, `/usr/share/...`).
+pub fn load_from_str(contents: &str, source_label: &str) -> Result<ConfigFile> {
+    let cfg: ConfigFile = toml::from_str(contents)
+        .map_err(|e| Error::Config(format!("parsing {}: {e}", source_label)))?;
+    validate(&cfg, Path::new(source_label))?;
+    Ok(cfg)
 }
 
 pub fn validate(cfg: &ConfigFile, path: &Path) -> Result<()> {

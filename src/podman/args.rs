@@ -58,6 +58,19 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         "--network".into(),
         spec.network.into(),
         "--init".into(),
+        // `--userns=keep-id` makes container UID 1000 map to host UID
+        // 1000 (no subordinate-uid shift). Critical for:
+        //   - GnuPG's socketdir-must-be-owned-by-running-user check
+        //     (otherwise the agent socket bind-mount is invisible)
+        //   - Files created by container agents being editable by the
+        //     host user (UID match → user-perm grants write)
+        //   - Host-mode-600 files (`~/.gnupg`, `~/.pulumi/credentials.json`,
+        //     `~/.ssh/id_*`) accessible without per-file ACL hacks
+        // grant_acls's ACL setup remains as a fallback for paths where
+        // the in-container user runs as a non-1000 UID (e.g. agent
+        // does `sudo`, switches to container root → host subordinate UID).
+        "--userns".into(),
+        "keep-id".into(),
         // Container init umask = 002 so children (including everything
         // spawned by `podman exec`) create files mode 0664 / dirs 0775.
         // Without this, the umask = 0022 in non-interactive shells gives

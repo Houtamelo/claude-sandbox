@@ -184,6 +184,44 @@ fn create_args_includes_binary_hash_label_when_set() {
 }
 
 #[test]
+fn create_args_emits_umask_0002() {
+    // Container's init process must default to umask 002 so files
+    // created by agent processes (which run via `podman exec`, NOT
+    // an interactive shell, so they DON'T source ~/.bashrc) come
+    // out mode 0664 / 0775 — group-writable. Without this, the host
+    // user can't edit files the in-container agent creates, even
+    // though the file's group resolves to the host user's primary
+    // group via userns translation of container GID 0.
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x",
+        image: "i:1",
+        volumes: &[],
+        env: &[],
+        network: "bridge",
+        ports: &[],
+        workdir: &workdir,
+        extra: &[],
+        toml_hash: None,
+        machine_hash: None,
+        oauth_hash: None,
+        binary_hash: None,
+        selinux: true,
+    };
+    let args = create_args(&spec);
+    let pos = args
+        .iter()
+        .position(|a| a == "--umask")
+        .expect("expected --umask flag in args");
+    assert_eq!(
+        args.get(pos + 1).map(|s| s.as_str()),
+        Some("0002"),
+        "umask value must be 0002 (group-writable); got: {:?}",
+        args.get(pos + 1)
+    );
+}
+
+#[test]
 fn create_args_omits_binary_hash_label_when_none() {
     let workdir = PathBuf::from("/work");
     let spec = CreateSpec {

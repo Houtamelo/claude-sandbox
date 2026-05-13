@@ -135,6 +135,61 @@ pub fn run_deps_script(podman: &Podman, name: &str, project: &Path) -> Result<()
 /// swallowed (`2>/dev/null` per `setfacl` call) so an exotic host path
 /// the user mounted doesn't fail the whole bootstrap. Trailing `true`
 /// keeps the bash script's exit code at zero.
+/// Pure script-builder for [`grant_acls`]. Returns the bash command we
+/// run as in-container root. Extracted so tests can assert the script
+/// shape directly without spinning up a real container.
+///
+/// Each `setfacl` invocation does THREE things:
+///   1. `u:<user>:rwx` — give the in-container claude user access to
+///      host-owned files (host UID != container UID without `keep-id`).
+///   2. `g::rwx,m::rwx` — set group + mask to rwx on existing entries.
+///      The file's group resolves to the host user's primary group via
+///      userns translation (container GID 0 → host GID 1000), so
+///      group-write means the host user can edit files the agent created.
+///   3. `d:u:<user>:rwx,d:g::rwx,d:m::rwx` — default ACL inherited by
+///      new files inside this dir. Without `d:g::rwx`, new files would
+///      pick up the parent's mode-bits-derived `default:group::r-x`
+///      and the bug would keep happening for every new file the agent
+///      creates.
+pub fn build_grant_acls_script(
+    user: &str,
+    project: &Path,
+    home: &Path,
+    user_mounts: &[crate::config::MountSpec],
+) -> String {
+    let mut cmd = format!(
+        "setfacl -R \
+            -m u:{user}:rwx -m g::rwx -m m::rwx \
+            -m d:u:{user}:rwx -m d:g::rwx -m d:m::rwx \
+            {project} {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null; \
+         setfacl -m u:{user}:rw -m g::rw {home}/.claude.json 2>/dev/null; ",
+        user = user,
+        home = home.display(),
+        project = project.display(),
+    );
+    for m in user_mounts {
+        if m.ro {
+            continue;
+        }
+        let path = crate::paths::expand(&m.container);
+        cmd.push_str(&format!(
+            "[ -d {path} ] && setfacl -R \
+                 -m u:{user}:rwx -m g::rwx -m m::rwx \
+                 -m d:u:{user}:rwx -m d:g::rwx -m d:m::rwx \
+                 {path} 2>/dev/null \
+             || setfacl -m u:{user}:rw -m g::rw {path} 2>/dev/null; ",
+            path = path,
+            user = user,
+        ));
+    }
+    cmd.push_str(&format!(
+        "[ -f /CLAUDE.md ] && ln -sf /CLAUDE.md {home}/CLAUDE.md 2>/dev/null; ",
+        home = home.display(),
+    ));
+    cmd.push_str("true");
+    cmd
+}
+
 pub fn grant_acls(
     podman: &Podman,
     name: &str,
@@ -142,42 +197,12 @@ pub fn grant_acls(
     user_mounts: &[crate::config::MountSpec],
 ) -> Result<()> {
     let home = crate::mounts::container_home();
-    // Bundled paths (always rw): project dir + Claude Code state dirs.
-    let mut cmd = format!(
-        "setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx \
-            {project} {home}/.claude {home}/.cache/claude-cli-nodejs {home}/.cache/claude 2>/dev/null; \
-         setfacl -m u:{user}:rw {home}/.claude.json 2>/dev/null; ",
-        user = crate::mounts::CONTAINER_USER,
-        home = home.display(),
-        project = project.display(),
+    let cmd = build_grant_acls_script(
+        crate::mounts::CONTAINER_USER,
+        project,
+        &home,
+        user_mounts,
     );
-    // User-declared rw mounts (e.g. `~/.pulumi`, `~/.aws`, `~/.config/gcloud`).
-    // Skip ro mounts: agent doesn't need write, and we'd rather not add an
-    // ACL entry to a user-protected file unnecessarily.
-    for m in user_mounts {
-        if m.ro {
-            continue;
-        }
-        let path = crate::paths::expand(&m.container);
-        cmd.push_str(&format!(
-            "[ -d {path} ] && setfacl -R -m u:{user}:rwx -m d:u:{user}:rwx {path} 2>/dev/null \
-             || setfacl -m u:{user}:rw {path} 2>/dev/null; ",
-            path = path,
-            user = crate::mounts::CONTAINER_USER,
-        ));
-    }
-    // Symlink the baked sandbox-awareness doc into the user's HOME so
-    // Claude Code's parent-directory CLAUDE.md walk actually picks it up.
-    // The walk stops at $HOME (verified empirically); `/CLAUDE.md` sits
-    // above $HOME and is never loaded. `ln -sf` is idempotent so this is
-    // safe to re-run on every start, and it makes future image rebuilds
-    // (which update /CLAUDE.md in place) reach the agent without needing
-    // any per-container `down` + recreate.
-    cmd.push_str(&format!(
-        "[ -f /CLAUDE.md ] && ln -sf /CLAUDE.md {home}/CLAUDE.md 2>/dev/null; ",
-        home = home.display(),
-    ));
-    cmd.push_str("true");
     let args = crate::podman::args::exec_args_as(name, Some("0"), false, &["bash", "-c", &cmd]);
     let _ = podman.run(&args);
     Ok(())

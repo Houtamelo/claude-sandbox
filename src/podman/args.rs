@@ -58,6 +58,17 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         "--network".into(),
         spec.network.into(),
         "--init".into(),
+        // Container init umask = 002 so children (including everything
+        // spawned by `podman exec`) create files mode 0664 / dirs 0775.
+        // Without this, the umask = 0022 in non-interactive shells gives
+        // files mode 0644 / dirs 0755 — host user can't edit files the
+        // in-container agent creates even though the file's group
+        // resolves to the host user's primary group via userns
+        // translation of container GID 0. The `umask 002` line we put
+        // in .bashrc only fires for interactive shells, so it doesn't
+        // cover `podman exec` invocations.
+        "--umask".into(),
+        "0002".into(),
         // Marker label so `claude-sandbox ls` can find every container we own
         // regardless of its derived name (which has no fixed prefix).
         "--label".into(),

@@ -14,4 +14,10 @@ Icon=utilities-terminal
 # %f is the right-clicked dir (or current dir for empty-space clicks).
 # `; exec bash` keeps the terminal open after claude-sandbox exits so
 # any error message (e.g. project-not-found hint) stays visible.
-Exec=konsole --workdir %f -e bash -c "claude-sandbox; echo; exec bash"
+#
+# `bash -lc` (login shell) instead of `-c` so ~/.profile / ~/.bash_profile
+# are sourced — KDE Plasma's systemd-user session typically doesn't add
+# ~/.cargo/bin or ~/.local/bin to PATH, so without a login shell the
+# servicemenu fails with "claude-sandbox: command not found" even when
+# the binary is on the user's interactive-shell PATH.
+Exec=konsole --workdir %f -e bash -lc "claude-sandbox; echo; exec bash"

@@ -184,20 +184,11 @@ fn create_args_includes_binary_hash_label_when_set() {
 }
 
 #[test]
-fn create_args_emits_userns_keep_id() {
-    // `--userns=keep-id` maps container UID 1000 directly to host UID
-    // 1000 (no subordinate-uid shift). Without it, container's claude
-    // (UID 1000 inside) maps to host UID 100999 — which means
-    // host-mode-600 files (~/.gnupg, ~/.pulumi/credentials.json, etc.)
-    // are denied to the container without ACLs, AND files the agent
-    // creates end up owned by host UID 100999 so the host user can't
-    // edit them without sudo. With keep-id, container claude == host
-    // houtamelo at the kernel level.
-    //
-    // Also fixes GnuPG's socketdir-must-be-owned-by-running-user check:
-    // /run/user/1000/gnupg gets owner == claude inside, so gpg uses
-    // the bind-mounted host agent socket instead of falling back to
-    // ~/.gnupg and spawning its own pinentry-less agent.
+fn create_args_does_not_emit_userns_keep_id() {
+    // Reverted from 7d5a6e8: --userns=keep-id triggers a malformed OCI
+    // spec on Tumbleweed + podman 5.8.2 + crun 1.27.1 ("readlink ``"
+    // error, container won't start). Guard against accidental re-add
+    // until that upstream bug is resolved.
     let workdir = PathBuf::from("/work");
     let spec = CreateSpec {
         name: "x",
@@ -215,15 +206,9 @@ fn create_args_emits_userns_keep_id() {
         selinux: true,
     };
     let args = create_args(&spec);
-    let pos = args
-        .iter()
-        .position(|a| a == "--userns")
-        .expect("expected --userns flag in args");
-    assert_eq!(
-        args.get(pos + 1).map(|s| s.as_str()),
-        Some("keep-id"),
-        "userns value must be `keep-id`; got: {:?}",
-        args.get(pos + 1)
+    assert!(
+        !args.iter().any(|a| a == "--userns"),
+        "--userns must NOT be in args (keep-id broken on Tumbleweed+podman 5.8.2): {args:?}"
     );
 }
 

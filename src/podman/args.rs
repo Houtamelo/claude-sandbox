@@ -58,19 +58,17 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
         "--network".into(),
         spec.network.into(),
         "--init".into(),
-        // `--userns=keep-id` makes container UID 1000 map to host UID
-        // 1000 (no subordinate-uid shift). Critical for:
-        //   - GnuPG's socketdir-must-be-owned-by-running-user check
-        //     (otherwise the agent socket bind-mount is invisible)
-        //   - Files created by container agents being editable by the
-        //     host user (UID match → user-perm grants write)
-        //   - Host-mode-600 files (`~/.gnupg`, `~/.pulumi/credentials.json`,
-        //     `~/.ssh/id_*`) accessible without per-file ACL hacks
-        // grant_acls's ACL setup remains as a fallback for paths where
-        // the in-container user runs as a non-1000 UID (e.g. agent
-        // does `sudo`, switches to container root → host subordinate UID).
-        "--userns".into(),
-        "keep-id".into(),
+        // `--userns=keep-id` was tried (7d5a6e8) to make container UID
+        // 1000 map to host UID 1000 — would have fixed GnuPG's
+        // socketdir-owned-by-running-user check + host-edit-permissions
+        // on agent-created files. Reverted because Tumbleweed +
+        // podman 5.8.2 + crun 1.27.1 generates a malformed OCI spec
+        // for keep-id ("readlink ``: No such file or directory" — empty
+        // command string somewhere in the spec). Containers wouldn't
+        // start. The non-keep-id ACL workaround (grant_acls + umask 002)
+        // is good enough for the common file-edit case; GPG signing from
+        // inside the container is the remaining casualty until the host
+        // crun/podman bug is fixed upstream.
         // Container init umask = 002 so children (including everything
         // spawned by `podman exec`) create files mode 0664 / dirs 0775.
         // Without this, the umask = 0022 in non-interactive shells gives

@@ -604,24 +604,27 @@ fn handle_oauth_token_step() -> Result<bool> {
 /// inspect the user-override slot at `~/.config/claude-sandbox/` and
 /// offer the appropriate action. Three cases per file:
 ///   - Absent: prompt to copy the embedded default in (opt-in).
-///   - MatchesEmbedded: identical no-op override (typically leftover
-///     from the old `make install`). Offer to delete by default so
-///     stale copies stop overriding future binary upgrades.
-///   - DiffersFromEmbedded: real divergence (manual edit OR stale
-///     pre-flexibility-pass copy). User picks keep / refresh / delete.
+///   - MatchesEmbedded: byte-identical to embedded (typically the
+///     post-auto-populate state on a fresh setup). Silent skip.
+///   - DiffersFromEmbedded: the user has edited their copy. Show a
+///     keep / refresh / delete picker so they can opt in to picking
+///     up new defaults if they want.
 fn run_cfg_assets_step() -> Result<()> {
     use claude_sandbox::assets;
 
     let cfg_dir = paths::config_dir();
     println!("==> Editable defaults under {}:", cfg_dir.display());
     println!(
-        "    Defaults live at /usr/share/claude-sandbox/ (when packaged) or are baked"
+        "    Defaults are baked into this binary via include_str!. On first cfg,"
     );
     println!(
-        "    into this binary via include_str!. Drop edited copies in ~/.config to override"
+        "    we drop a full editable copy of each default into ~/.config so you"
     );
     println!(
-        "    per-machine — the three-tier runtime lookup picks the user override first."
+        "    can see and edit every shipped recipe — without accidentally shadowing"
+    );
+    println!(
+        "    them by writing a sparse override file."
     );
 
     handle_one_asset(
@@ -646,7 +649,7 @@ fn handle_one_asset(
     state: claude_sandbox::assets::OverrideState,
 ) -> Result<()> {
     use claude_sandbox::assets::OverrideState;
-    use dialoguer::{Confirm, Select};
+    use dialoguer::Select;
 
     let prompt_err = |e: dialoguer::Error| {
         claude_sandbox::error::Error::Other(format!("prompt failed: {e}"))
@@ -657,35 +660,24 @@ fn handle_one_asset(
 
     match state {
         OverrideState::Absent => {
-            let copy = Confirm::new()
-                .with_prompt(format!("[{label}] copy editable default into {}?", path.display()))
-                .default(false)
-                .interact()
-                .map_err(prompt_err)?;
-            if copy {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| io_err("mkdir", parent, e))?;
-                }
-                std::fs::write(path, embedded).map_err(|e| io_err("write", path, e))?;
-                println!("    Wrote {}.", path.display());
+            // Auto-populate: drop the embedded template into the user's
+            // config dir on first cfg. This avoids the trap where a user
+            // who creates ~/.config/claude-sandbox/config.toml by hand
+            // (or via a sparse manual edit) silently shadows ALL the
+            // embedded recipes (SSH/GPG/Pulse forwarding, etc.). With
+            // auto-populate, the user's file always starts as a full,
+            // visible copy of the defaults — they edit on top of it.
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| io_err("mkdir", parent, e))?;
             }
+            std::fs::write(path, embedded).map_err(|e| io_err("write", path, e))?;
+            println!("    Wrote {} (editable copy of embedded defaults).", path.display());
         }
         OverrideState::MatchesEmbedded => {
-            // Stale-cruft case: an older `make install` deployed this
-            // unchanged. Default "yes, delete" so users who never edited
-            // it stop overriding future binary upgrades by accident.
-            let del = Confirm::new()
-                .with_prompt(format!(
-                    "[{label}] {} is identical to the embedded default (no-op override). Delete?",
-                    path.display()
-                ))
-                .default(true)
-                .interact()
-                .map_err(prompt_err)?;
-            if del {
-                std::fs::remove_file(path).map_err(|e| io_err("delete", path, e))?;
-                println!("    Deleted {}.", path.display());
-            }
+            // File is byte-identical to the embedded copy — typically
+            // the result of an earlier cfg run's auto-populate followed
+            // by no edits. Silent skip: nothing the user needs to act on.
+            println!("    {} matches the embedded default — no changes needed.", path.display());
         }
         OverrideState::DiffersFromEmbedded => {
             println!(

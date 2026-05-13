@@ -54,11 +54,13 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn embedded_default_provides_ssh_agent_true_and_bridge_network() {
+fn embedded_default_provides_bridge_network_and_env_passthrough() {
     // Neither override exists -> the embedded default is the source of
     // truth. Asserting on the actual values from assets/default-config.toml
     // makes this test the regression net for "someone changed the
-    // embedded default silently".
+    // embedded default silently". Currently: network=bridge, plus
+    // env_passthrough = [SSH_AUTH_SOCK, XDG_RUNTIME_DIR] used by the
+    // shipped agent-forwarding recipes.
     let _lock = SERIAL.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("home");
@@ -68,11 +70,31 @@ fn embedded_default_provides_ssh_agent_true_and_bridge_network() {
     let _g = EnvGuard::pin(&home, &sys);
 
     let cfg = load_global_merged(None).unwrap();
-    assert_eq!(cfg.ssh_agent, Some(true), "embedded default sets ssh_agent = true");
     assert_eq!(
         cfg.network.as_deref(),
         Some("bridge"),
         "embedded default sets network = bridge"
+    );
+    assert!(
+        cfg.env_passthrough.iter().any(|s| s == "SSH_AUTH_SOCK"),
+        "embedded default must pass SSH_AUTH_SOCK through for the ssh-agent recipe; got: {:?}",
+        cfg.env_passthrough
+    );
+    assert!(
+        cfg.env_passthrough.iter().any(|s| s == "XDG_RUNTIME_DIR"),
+        "embedded default must pass XDG_RUNTIME_DIR for the gpg-agent / pulse recipes; got: {:?}",
+        cfg.env_passthrough
+    );
+    // Sanity: agent-forwarding recipes are present as [[mount]] entries
+    // (they're optional so they don't break headless hosts).
+    let mount_hosts: Vec<&str> = cfg.mount.iter().map(|m| m.host.as_str()).collect();
+    assert!(
+        mount_hosts.contains(&"$SSH_AUTH_SOCK"),
+        "embedded must include $SSH_AUTH_SOCK [[mount]] recipe; got: {mount_hosts:?}"
+    );
+    assert!(
+        mount_hosts.contains(&"~/.gnupg"),
+        "embedded must include ~/.gnupg [[mount]] recipe; got: {mount_hosts:?}"
     );
 }
 
@@ -87,14 +109,17 @@ fn user_override_wins_over_embedded() {
     std::fs::create_dir_all(&sys).unwrap();
     std::fs::write(
         cfg_dir.join("config.toml"),
-        "ssh_agent = false\nnetwork = \"host\"\n",
+        "network = \"host\"\n",
     )
     .unwrap();
     let _g = EnvGuard::pin(&home, &sys);
 
     let cfg = load_global_merged(None).unwrap();
-    assert_eq!(cfg.ssh_agent, Some(false), "user override must replace embedded");
-    assert_eq!(cfg.network.as_deref(), Some("host"));
+    assert_eq!(
+        cfg.network.as_deref(),
+        Some("host"),
+        "user override must replace embedded network value"
+    );
 }
 
 #[test]
@@ -131,7 +156,7 @@ fn local_project_overrides_global() {
     let local = project_dir.join(".claude-sandbox.toml");
     std::fs::write(
         &local,
-        "name = \"myproj\"\nnetwork = \"host\"\nssh_agent = false\n",
+        "name = \"myproj\"\nnetwork = \"host\"\n",
     )
     .unwrap();
 
@@ -139,7 +164,6 @@ fn local_project_overrides_global() {
     // Local fields win:
     assert_eq!(cfg.name.as_deref(), Some("myproj"));
     assert_eq!(cfg.network.as_deref(), Some("host"));
-    assert_eq!(cfg.ssh_agent, Some(false));
 }
 
 #[test]
@@ -158,8 +182,8 @@ fn missing_local_path_is_silently_ignored() {
 
     let nonexistent = tmp.path().join("does-not-exist.toml");
     let cfg = load_global_merged(Some(&nonexistent)).unwrap();
-    // Falls back to embedded (which sets ssh_agent = true).
-    assert_eq!(cfg.ssh_agent, Some(true));
+    // Falls back to embedded (which sets network = bridge).
+    assert_eq!(cfg.network.as_deref(), Some("bridge"));
 }
 
 #[test]

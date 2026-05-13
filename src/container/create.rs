@@ -248,12 +248,6 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         "CS_PROJECT_PATH".into(),
         opts.project_path.display().to_string(),
     ));
-    if opts.config.ssh_agent.unwrap_or(true) {
-        env::ensure_ssh_agent(&mut env_pairs, &mut volumes);
-    }
-    if opts.config.gpg_agent.unwrap_or(false) {
-        env::ensure_gpg_agent(&mut volumes);
-    }
     // Inject the long-lived OAuth token if the user configured one via
     // `claude-sandbox cfg`. Higher precedence than the bind-mounted
     // `.credentials.json`, so the container authenticates from env and

@@ -1,9 +1,3 @@
-use std::path::PathBuf;
-
-pub fn ssh_agent_socket() -> Option<PathBuf> {
-    std::env::var_os("SSH_AUTH_SOCK").map(PathBuf::from)
-}
-
 use std::net::TcpListener;
 
 use crate::error::{Error, Result};

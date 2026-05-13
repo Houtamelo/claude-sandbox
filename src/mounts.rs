@@ -134,18 +134,11 @@ pub fn default_volumes(project_path: &Path, container_name: &str) -> Vec<Volume>
             ro: true,
         }));
     }
-    // PulseAudio socket pass-through so notification sounds (e.g. stop-hook
-    // /usr/bin/paplay), audio playback, etc. reach the host's audio server.
-    // Works against both real PulseAudio and PipeWire's pulse-compat layer.
-    let uid = nix::unistd::Uid::current().as_raw();
-    let pulse_sock = std::path::PathBuf::from(format!("/run/user/{uid}/pulse/native"));
-    if pulse_sock.exists() {
-        v.push(Volume::Bind(Mount {
-            host: pulse_sock.clone(),
-            container: pulse_sock,
-            ro: false,
-        }));
-    }
+    // PulseAudio / SSH-agent / GPG-agent forwarding used to be hardcoded
+    // here. Now those are shipped as user-visible `[[mount]]` recipes in
+    // the machine-wide config.toml (assets/default-config.toml), gated by
+    // the new `optional = true` semantics so hosts that don't run those
+    // services don't see parse errors or podman-create failures.
     v
 }
 
@@ -172,21 +165,47 @@ fn ensure_file(p: PathBuf) -> PathBuf {
 pub fn extra_volumes(cfg: &ConfigFile, project: &Path) -> Vec<Volume> {
     cfg.mount
         .iter()
-        .map(|m| spec_to_volume(m, project))
+        .filter_map(|m| spec_to_volume_optional(m, project))
         .collect()
 }
 
-fn spec_to_volume(m: &MountSpec, project: &Path) -> Volume {
+/// Build a podman volume from a MountSpec. Required mounts (default)
+/// always return Some — failure modes surface at podman-create time.
+///
+/// Optional mounts (`optional = true`) are filtered out when the host
+/// path can't be made concrete: an unresolved `$VAR` leaves `$` in the
+/// expansion, and a missing file/dir on disk means there's nothing to
+/// bind. This lets the shipped machine-wide `config.toml` ship recipes
+/// like `host = "$SSH_AUTH_SOCK"` without breaking on hosts that don't
+/// run an SSH agent.
+pub fn spec_to_volume_optional(m: &MountSpec, project: &Path) -> Option<Volume> {
+    let host_raw = paths::expand(&m.host);
+    if m.optional {
+        // Unresolved $VAR — paths::expand leaves the literal `$NAME`
+        // in place when the env var isn't set. Treat as "skip silently".
+        if host_raw.contains('$') {
+            return None;
+        }
+        // Resolved path that doesn't exist on disk — skip too.
+        let resolved_for_check = if host_raw.starts_with('/') || host_raw.starts_with('~') {
+            std::path::PathBuf::from(&host_raw)
+        } else {
+            project.join(&host_raw)
+        };
+        if !resolved_for_check.exists() {
+            return None;
+        }
+    }
     let host = if m.host.starts_with('/') || m.host.starts_with('~') || m.host.starts_with('$') {
-        std::path::PathBuf::from(paths::expand(&m.host))
+        std::path::PathBuf::from(host_raw)
     } else {
         project.join(&m.host)
     };
-    Volume::Bind(Mount {
+    Some(Volume::Bind(Mount {
         host,
         container: PathBuf::from(paths::expand(&m.container)),
         ro: m.ro,
-    })
+    }))
 }
 
 pub fn toml_mount(project: &Path, agent_writable: bool) -> Volume {

@@ -1,8 +1,77 @@
-# Global defaults for claude-sandbox.
-# Per-project .claude-sandbox.toml overrides these.
+# Machine-wide claude-sandbox defaults. Edit via `claude-sandbox cfg`
+# (which copies this template into ~/.config/claude-sandbox/config.toml
+# for per-machine editing). Per-project .claude-sandbox.toml merges on
+# top: scalars override, lists concatenate.
 
-ssh_agent = true
 network = "bridge"
 
-# Example: globally available tools.
+# Pass host env vars through so in-container tools auto-discover their
+# host equivalents. SSH_AUTH_SOCK + XDG_RUNTIME_DIR are inherited
+# unconditionally; the matching [[mount]] entries below provide the
+# socket files at the same paths inside the container.
+env_passthrough = ["SSH_AUTH_SOCK", "XDG_RUNTIME_DIR"]
+
+
+# ---- Agent / socket forwarding recipes ----
+#
+# Each `[[mount]]` below is `optional = true`, which means
+# claude-sandbox skips it silently when the host path doesn't resolve
+# (env var unset, or file/dir not present). Headless hosts without an
+# SSH agent / PulseAudio server / etc. won't see parse errors or
+# podman-create failures — those recipes just become no-ops.
+#
+# To disable any of these per-machine, edit your local copy in
+# ~/.config/claude-sandbox/config.toml (run `claude-sandbox cfg` and
+# accept the "copy editable defaults" prompt to get one).
+# Per-project: same field in .claude-sandbox.toml, OR add `[[mount]]`
+# entries that shadow these.
+
+# SSH agent + ~/.ssh/ for `git push`, ssh, scp. The socket lives at the
+# host's $SSH_AUTH_SOCK; bind-mounting it at the same path inside (the
+# env var is also passed through above) means the in-container ssh
+# Just Works against the host agent. ~/.ssh/ exposes config,
+# known_hosts, public keys, and identity-file fallbacks (read-only —
+# container has no business writing to host SSH state).
+[[mount]]
+host = "$SSH_AUTH_SOCK"
+container = "$SSH_AUTH_SOCK"
+optional = true
+
+[[mount]]
+host = "~/.ssh"
+container = "~/.ssh"
+ro = true
+optional = true
+
+# GPG keyring + agent socket for commit signing / decryption. Modern
+# GnuPG (>= 2.1) keeps the agent socket under $XDG_RUNTIME_DIR/gnupg/
+# separate from the keyring under ~/.gnupg/ — both must be present for
+# the in-container gpg to talk to the host's already-unlocked agent
+# (pinentry runs on the host where the user can see it).
+[[mount]]
+host = "~/.gnupg"
+container = "~/.gnupg"
+optional = true
+
+[[mount]]
+host = "$XDG_RUNTIME_DIR/gnupg"
+container = "$XDG_RUNTIME_DIR/gnupg"
+optional = true
+
+# PulseAudio for notification sounds (paplay) and audio playback. Works
+# against both real PulseAudio and PipeWire's pulse-compat layer.
+# libpulse auto-discovers the socket via $XDG_RUNTIME_DIR (passed
+# through above) — no explicit PULSE_SERVER needed.
+[[mount]]
+host = "$XDG_RUNTIME_DIR/pulse/native"
+container = "$XDG_RUNTIME_DIR/pulse/native"
+optional = true
+
+
+# ---- Examples (commented out) ----
+#
+# Globally available tools, applied on every container creation:
 # setup = ["apt-get install -y ripgrep fd-find"]
+#
+# Always-running container-startup hook:
+# on_start = ["systemctl --user start <service>"]

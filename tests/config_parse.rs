@@ -32,7 +32,6 @@ mount = [
 env_passthrough = ["PULUMI_ACCESS_TOKEN"]
 env = { CARGO_TERM_COLOR = "always" }
 env_file = ".env"
-ssh_agent = false
 network = "bridge"
 ports = ["5173:5173", "!8080:8080", ":3000"]
 gpu = true
@@ -50,15 +49,6 @@ cpus = 4
     assert!(c.gpu);
     assert_eq!(c.limits.memory.as_deref(), Some("16g"));
     assert_eq!(c.limits.cpus, Some(4.0));
-}
-
-#[test]
-fn gpg_agent_defaults_to_none_meaning_off() {
-    // No `gpg_agent` field at all → None → callers `.unwrap_or(false)`
-    // → off. Explicit opt-in only.
-    let tmp = write("name = \"x\"\n");
-    let c = load(&tmp.path().join("c.toml")).unwrap();
-    assert_eq!(c.gpg_agent, None);
 }
 
 #[test]
@@ -95,11 +85,31 @@ fn claude_flags_can_be_explicit_empty() {
     assert_eq!(c.claude_flags, Some(vec![]));
 }
 
+/// Guards the clean-break removal of the built-in `ssh_agent` /
+/// `gpg_agent` per-project flags. Existing tomls with these fields are
+/// intentionally broken; the shipped machine-wide config.toml ships
+/// `[[mount]]` recipes that achieve the same forwarding behavior, and
+/// users override per-project via additional `[[mount]]` entries.
 #[test]
-fn gpg_agent_can_be_explicit() {
+fn rejects_legacy_ssh_agent_field() {
+    let tmp = write("name = \"x\"\nssh_agent = true\n");
+    let e = load(&tmp.path().join("c.toml")).unwrap_err();
+    let msg = format!("{e}");
+    assert!(
+        msg.contains("ssh_agent") || msg.contains("unknown"),
+        "expected an unknown-field error mentioning `ssh_agent`; got: {msg}"
+    );
+}
+
+#[test]
+fn rejects_legacy_gpg_agent_field() {
     let tmp = write("name = \"x\"\ngpg_agent = true\n");
-    let c = load(&tmp.path().join("c.toml")).unwrap();
-    assert_eq!(c.gpg_agent, Some(true));
+    let e = load(&tmp.path().join("c.toml")).unwrap_err();
+    let msg = format!("{e}");
+    assert!(
+        msg.contains("gpg_agent") || msg.contains("unknown"),
+        "expected an unknown-field error mentioning `gpg_agent`; got: {msg}"
+    );
 }
 
 /// Guards the clean-break removal of the built-in Tailscale feature.
@@ -161,9 +171,9 @@ fn load_from_str_parses_in_memory_toml() {
     // load_from_str is the string-source equivalent of `load(path)` —
     // used by load_global_merged when the global config lives in
     // /usr/share/claude-sandbox/ or is embedded into the binary.
-    let c = load_from_str("name = \"y\"\nssh_agent = true\n", "<test>").unwrap();
+    let c = load_from_str("name = \"y\"\nnetwork = \"bridge\"\n", "<test>").unwrap();
     assert_eq!(c.name.as_deref(), Some("y"));
-    assert_eq!(c.ssh_agent, Some(true));
+    assert_eq!(c.network.as_deref(), Some("bridge"));
 }
 
 #[test]

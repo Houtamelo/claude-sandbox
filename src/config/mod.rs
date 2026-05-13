@@ -22,13 +22,6 @@ pub struct ConfigFile {
     pub env: BTreeMap<String, String>,
     pub env_file: Option<String>,
 
-    pub ssh_agent: Option<bool>,
-    /// Forward the host's GPG home (`~/.gnupg/`) into the container at
-    /// the matching path, rw. Default `false` because most projects
-    /// don't need GPG and forwarding exposes the private keyring to
-    /// the container. Set `gpg_agent = true` to enable for projects
-    /// that sign commits / encrypt artefacts.
-    pub gpg_agent: Option<bool>,
     /// Override the machine-wide `[claude] flags` from `machine.toml`.
     /// `None` (the default) means "use the machine setting". `Some([..])`
     /// REPLACES the machine setting entirely — if you want the
@@ -62,6 +55,14 @@ pub struct MountSpec {
     pub container: String,
     #[serde(default)]
     pub ro: bool,
+    /// When `true`, the mount is silently skipped at container-create
+    /// time if the host path can't be resolved (unresolved `$VAR`) or
+    /// doesn't exist on disk. Used by the shipped machine-wide
+    /// `config.toml` recipes for ssh-agent / gpg-agent / pulseaudio
+    /// sockets — hosts that don't run those services get an empty mount
+    /// list instead of a parse error or a podman-create failure.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -91,12 +92,6 @@ impl ConfigFile {
         }
         if other.env_file.is_some() {
             self.env_file = other.env_file;
-        }
-        if other.ssh_agent.is_some() {
-            self.ssh_agent = other.ssh_agent;
-        }
-        if other.gpg_agent.is_some() {
-            self.gpg_agent = other.gpg_agent;
         }
         // `claude_flags` is full-replace, not append: setting it
         // per-project means "use exactly this list", overriding the

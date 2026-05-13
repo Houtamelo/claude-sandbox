@@ -200,6 +200,21 @@ pub fn oauth_token_exists() -> bool {
     oauth_token_path().exists()
 }
 
+/// Delete the on-disk OAuth token. Used by the cfg wizard's "remove"
+/// branch when the user wants to take containers back to the legacy
+/// bind-mounted-`.credentials.json` auth path.
+///
+/// Idempotent: missing file is the desired post-condition, so absence
+/// is not an error.
+pub fn remove_oauth_token() -> Result<()> {
+    let p = oauth_token_path();
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::Config(format!("removing {}: {e}", p.display()))),
+    }
+}
+
 /// Read the token from disk. None if the file is absent (user hasn't
 /// configured one — host falls back to bind-mounted `.credentials.json`
 /// the legacy way). Whitespace is trimmed to absorb the trailing newline

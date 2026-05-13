@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use claude_sandbox::machine::{
     load_oauth_token, oauth_token_exists, oauth_token_hash, oauth_token_path,
-    save_oauth_token,
+    remove_oauth_token, save_oauth_token,
 };
 
 /// Each test gets its own isolated $HOME so we don't read/write the
@@ -93,6 +93,55 @@ fn hash_changes_when_token_changes() {
             h_first, h_second,
             "rotating the token must change the hash — otherwise the \
              cs-oauth-hash label won't trip a container recreate"
+        );
+    });
+}
+
+#[test]
+fn remove_deletes_existing_token_file() {
+    // The cfg wizard's "remove" branch needs a way to take the user back
+    // to the bind-mounted-credentials.json codepath. Deleting the file
+    // both nukes the credential AND makes the credentials-shadow mount
+    // skip (mounts::default_volumes gates on oauth_token_exists).
+    with_isolated_home(|| {
+        save_oauth_token("sk-ant-oat01-toremove").unwrap();
+        assert!(oauth_token_exists());
+        remove_oauth_token().unwrap();
+        assert!(!oauth_token_exists(), "file must be gone after remove");
+        assert_eq!(load_oauth_token().unwrap(), None);
+    });
+}
+
+#[test]
+fn remove_is_idempotent_when_no_token_exists() {
+    // No-op when there's nothing to remove. The wizard might call this
+    // defensively, and a missing file is the desired post-condition.
+    with_isolated_home(|| {
+        assert!(!oauth_token_exists());
+        remove_oauth_token().expect("removing absent token must not error");
+        assert!(!oauth_token_exists());
+        // Second call also OK.
+        remove_oauth_token().expect("idempotent");
+    });
+}
+
+#[test]
+fn remove_changes_hash_back_to_absent_sentinel() {
+    // The cs-oauth-hash label uses the hash for container-recreate
+    // gating. After remove, the hash must match the "no token configured"
+    // hash so subsequent container creates see a different label and
+    // recreate (otherwise the container stays bound to the just-removed
+    // env-var token).
+    with_isolated_home(|| {
+        let absent_hash = oauth_token_hash();
+        save_oauth_token("sk-ant-oat01-presence").unwrap();
+        let present_hash = oauth_token_hash();
+        assert_ne!(absent_hash, present_hash);
+        remove_oauth_token().unwrap();
+        assert_eq!(
+            oauth_token_hash(),
+            absent_hash,
+            "after remove, hash returns to the absent-sentinel value"
         );
     });
 }

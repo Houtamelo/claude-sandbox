@@ -229,7 +229,7 @@ fn run_host() -> Result<()> {
 fn run_cfg_wizard() -> Result<()> {
     use claude_sandbox::features::gpu::{self as gpu_feat, GpuVendor};
     use claude_sandbox::machine::{self, ClaudeSpec, GpuSpec, HostSpec, ImageSpec, MachineConfig};
-    use dialoguer::{Confirm, Input, Password};
+    use dialoguer::Input;
 
     let existing = if machine::exists() { machine::load().ok() } else { None };
 
@@ -391,78 +391,11 @@ fn run_cfg_wizard() -> Result<()> {
     // a single `.credentials.json` between host + multiple containers
     // triggers OAuth refresh-token rotation collisions; passing the token
     // via env var per-container sidesteps that entirely.
-    let token_already = machine::oauth_token_exists();
-    let want_token = if token_already {
-        Confirm::new()
-            .with_prompt("OAuth token already configured. Replace it?")
-            .default(false)
-            .interact()
-            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?
-    } else {
-        Confirm::new()
-            .with_prompt(
-                "Set up a long-lived OAuth token so containers don't share \
-                 your auth file with the host? (recommended)",
-            )
-            .default(true)
-            .interact()
-            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?
-    };
-
-    let oauth_changed = if want_token {
-        println!();
-        println!(
-            "    Run `claude setup-token` in another terminal — it opens a browser,"
-        );
-        println!(
-            "    walks you through OAuth, and prints a token starting with `sk-ant-oat01-`."
-        );
-        println!("    Paste it below (input is hidden):\n");
-        let token: String = Password::new()
-            .with_prompt("OAuth token")
-            .interact()
-            .map_err(|e| claude_sandbox::error::Error::Other(format!("prompt failed: {e}")))?;
-        let trimmed = token.trim();
-        if !trimmed.starts_with("sk-ant-") {
-            return Err(claude_sandbox::error::Error::Other(
-                "that doesn't look like a Claude Code OAuth token \
-                 (expected to start with `sk-ant-`). Aborting; existing token \
-                 (if any) is unchanged."
-                    .into(),
-            ));
-        }
-        // Validate against Anthropic's API BEFORE saving — catches typos,
-        // wrong tokens, and revoked tokens at the point the user pastes
-        // them, instead of waiting until container start to surface the
-        // problem. Network failures are demoted to a warning so an
-        // offline laptop doesn't block the user from saving.
-        println!("Validating token with Anthropic...");
-        match machine::validate_oauth_token(trimmed) {
-            machine::TokenValidation::Valid => {}
-            machine::TokenValidation::Invalid { detail } => {
-                return Err(claude_sandbox::error::Error::Other(format!(
-                    "token rejected: {detail}. Generate a fresh one with \
-                     `claude setup-token` and re-run `claude-sandbox cfg`."
-                )));
-            }
-            machine::TokenValidation::Unknown { reason } => {
-                eprintln!(
-                    "[warn] couldn't verify token with Anthropic ({reason}). \
-                     Saving anyway; container start will re-validate."
-                );
-            }
-        }
-        let prev_hash = machine::oauth_token_hash();
-        machine::save_oauth_token(trimmed)?;
-        let new_hash = machine::oauth_token_hash();
-        prev_hash != new_hash
-    } else {
-        false
-    };
+    let oauth_changed = handle_oauth_token_step()?;
 
     println!("\nSaved {}.", machine::path().display());
-    if want_token {
-        println!("Saved {}.", machine::oauth_token_path().display());
+    if machine::oauth_token_exists() {
+        println!("OAuth token at {}.", machine::oauth_token_path().display());
     }
 
     // ---- Desktop integration (KDE auto-install only) ----
@@ -554,6 +487,117 @@ fn run_cfg_desktop_step() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// OAuth-token step of the cfg wizard. Splits into three states based on
+/// whether a token is already on disk, mirroring the `run_cfg_assets_step`
+/// Select-style UX so users always see what the default is at a glance:
+///
+/// - **No token configured** (first-run): single Confirm to opt-in. Same
+///   wording as before.
+/// - **Token already configured**: 3-option Select — keep / replace /
+///   remove. Default highlight on "keep" so pressing Enter preserves
+///   working state. The previous Confirm "Replace it?" with default-no
+///   technically did the right thing but framed the keep path as a
+///   negative; making it explicit cuts the misclick risk.
+///
+/// Returns `Ok(true)` iff the on-disk token's hash changed (replace
+/// success, remove, or fresh save), so the parent wizard can announce
+/// container-recreate is needed.
+fn handle_oauth_token_step() -> Result<bool> {
+    use claude_sandbox::machine::{self};
+    use dialoguer::{Confirm, Password, Select};
+
+    let prompt_err = |e: dialoguer::Error| {
+        claude_sandbox::error::Error::Other(format!("prompt failed: {e}"))
+    };
+    let prev_hash = machine::oauth_token_hash();
+
+    if machine::oauth_token_exists() {
+        println!(
+            "==> OAuth token already configured at {}. Action?",
+            machine::oauth_token_path().display()
+        );
+        let action = Select::new()
+            .item("keep existing (recommended)")
+            .item("replace with a new token")
+            .item("remove (containers fall back to host .credentials.json)")
+            .default(0)
+            .interact()
+            .map_err(prompt_err)?;
+        match action {
+            0 => {
+                println!("    Keeping existing token.");
+                return Ok(false);
+            }
+            1 => {
+                // fall through to the prompt-and-save flow below
+            }
+            2 => {
+                machine::remove_oauth_token()?;
+                println!("    Removed token. Containers will use the host's");
+                println!(
+                    "    bind-mounted .credentials.json — subject to OAuth"
+                );
+                println!("    refresh-token race issues. Re-add later with cfg.");
+                return Ok(machine::oauth_token_hash() != prev_hash);
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        let opt_in = Confirm::new()
+            .with_prompt(
+                "Set up a long-lived OAuth token so containers don't share \
+                 your auth file with the host? (recommended)",
+            )
+            .default(true)
+            .interact()
+            .map_err(prompt_err)?;
+        if !opt_in {
+            return Ok(false);
+        }
+    }
+
+    println!();
+    println!(
+        "    Run `claude setup-token` in another terminal — it opens a browser,"
+    );
+    println!(
+        "    walks you through OAuth, and prints a token starting with `sk-ant-oat01-`."
+    );
+    println!("    Paste it below (input is hidden):\n");
+    let token: String = Password::new()
+        .with_prompt("OAuth token")
+        .interact()
+        .map_err(prompt_err)?;
+    let trimmed = token.trim();
+    if !trimmed.starts_with("sk-ant-") {
+        return Err(claude_sandbox::error::Error::Other(
+            "that doesn't look like a Claude Code OAuth token \
+             (expected to start with `sk-ant-`). Aborting; existing token \
+             (if any) is unchanged."
+                .into(),
+        ));
+    }
+
+    println!("Validating token with Anthropic...");
+    match machine::validate_oauth_token(trimmed) {
+        machine::TokenValidation::Valid => {}
+        machine::TokenValidation::Invalid { detail } => {
+            return Err(claude_sandbox::error::Error::Other(format!(
+                "token rejected: {detail}. Generate a fresh one with \
+                 `claude setup-token` and re-run `claude-sandbox cfg`."
+            )));
+        }
+        machine::TokenValidation::Unknown { reason } => {
+            eprintln!(
+                "[warn] couldn't verify token with Anthropic ({reason}). \
+                 Saving anyway; container start will re-validate."
+            );
+        }
+    }
+    machine::save_oauth_token(trimmed)?;
+    Ok(machine::oauth_token_hash() != prev_hash)
 }
 
 /// Per-machine assets step: for each of `Dockerfile` and `config.toml`,

@@ -86,10 +86,19 @@ fn builtin_flags(vendor: GpuVendor) -> Vec<String> {
     match vendor {
         GpuVendor::None | GpuVendor::Custom => Vec::new(),
         // Standard NVIDIA CDI spec emitted by nvidia-container-toolkit.
-        // Requires the toolkit to be installed on the host.
+        // Requires the toolkit to be installed on the host. `keep-groups`
+        // passes the host process's supplementary groups (`video`,
+        // `render`) into the container so the in-container claude user
+        // (UID 1000, GID 0) can actually open /dev/nvidia* — which are
+        // typically 660 root:video on the host. Without this, CDI mounts
+        // the device files but NVML init fails with "Insufficient
+        // Permissions". The host user must be in `video` (and ideally
+        // `render`) for keep-groups to have anything useful to copy.
         GpuVendor::Nvidia => vec![
             "--device".into(),
             "nvidia.com/gpu=all".into(),
+            "--group-add".into(),
+            "keep-groups".into(),
         ],
         // AMD: DRM render nodes + KFD (compute). `keep-groups` passes
         // the host user's supplementary groups (typically `render` and

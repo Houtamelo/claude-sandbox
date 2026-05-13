@@ -26,10 +26,21 @@ fn custom_vendor_returns_only_extra_args() {
 }
 
 #[test]
-fn nvidia_emits_cdi_spec() {
+fn nvidia_emits_cdi_spec_and_keep_groups() {
+    // CDI gives us the device files, but inside a rootless-podman userns
+    // the kernel's access check uses group perms (/dev/nvidia* is 660
+    // root:video on most distros, including Tumbleweed). The container's
+    // claude user must inherit the host process's `video`/`render`
+    // supplementary groups via keep-groups, otherwise nvidia-smi inside
+    // the container fails with "Failed to initialize NVML: Insufficient
+    // Permissions" even though the CDI device passthrough succeeded.
+    //
+    // Symmetry with AMD/Intel branches, which already pass keep-groups.
     let out = flags(GpuVendor::Nvidia, &[], true);
     assert!(out.windows(2).any(|w| w == ["--device", "nvidia.com/gpu=all"]),
             "missing NVIDIA CDI flags: {out:?}");
+    assert!(out.windows(2).any(|w| w == ["--group-add", "keep-groups"]),
+            "NVIDIA must pass host's video/render groups: {out:?}");
 }
 
 #[test]

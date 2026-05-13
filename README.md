@@ -10,7 +10,9 @@ Claude gets full `sudo` inside; your host is unaffected.
   package-manager defaults are sufficient.
 - **openSUSE Tumbleweed only:** the default Podman ships `runc` and a kernel
   overlay driver, which fail on `--userns=keep-id` + bind mounts. Install
-  `crun` and switch to `fuse-overlayfs`:
+  `crun` and switch to `fuse-overlayfs`, then also tell Podman to actually
+  use `crun` as the OCI runtime (installing it alone isn't enough — the
+  runtime is selected at container-create time):
 
       sudo zypper install crun fuse-overlayfs
       mkdir -p ~/.config/containers
@@ -21,6 +23,17 @@ Claude gets full `sudo` inside; your host is unaffected.
       [storage.options.overlay]
       mount_program = "/usr/bin/fuse-overlayfs"
       EOF
+      cat > ~/.config/containers/containers.conf <<'EOF'
+      [engine]
+      runtime = "crun"
+      EOF
+
+  Verify with `podman info --format '{{.Host.OCIRuntime.Name}}'` — should
+  print `crun`, not `runc`. **GPU passthrough silently fails** if this is
+  still `runc`: `--group-add keep-groups` becomes a no-op (it's a crun-only
+  annotation), the in-container user doesn't inherit `video` / `render`
+  group membership, and `nvidia-smi` reports "Insufficient Permissions"
+  despite the CDI spec being correctly applied.
 
   Then reset existing storage so the new driver applies:
 
@@ -83,6 +96,14 @@ at least once.
 Editing `.claude-sandbox.toml` (per-project) or `~/.config/claude-sandbox/machine.toml`
 (machine-wide) auto-triggers an image rebuild and/or container recreate on the
 next start. Named home volume survives, so in-container `$HOME` state persists.
+
+GPU passthrough: enable per-project with `gpu = true` in `.claude-sandbox.toml`.
+The wizard probes for vendor at `cfg` time (`[gpu] vendor = "nvidia"|"amd"|...`
+in `machine.toml`). On NVIDIA, install `nvidia-container-toolkit` and generate
+the CDI spec (`sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`).
+The host user must be in the `video` and `render` groups (`sudo usermod -aG
+video,render <user>`, then re-login) so `--group-add keep-groups` has
+supplementary groups to inherit into the container.
 
 ## Docs
 

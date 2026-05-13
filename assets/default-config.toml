@@ -11,6 +11,16 @@ network = "bridge"
 # socket files at the same paths inside the container.
 env_passthrough = ["SSH_AUTH_SOCK", "XDG_RUNTIME_DIR"]
 
+# PulseAudio explicit server path — bypasses libpulse's XDG-based
+# auto-discovery, which fails inside the container because libpulse
+# verifies that XDG_RUNTIME_DIR is owned by the running UID. Without
+# `--userns=keep-id` (currently disabled — see src/podman/args.rs)
+# the dir appears owned by container UID 0 (host UID 1000 remapped),
+# so the check fails. Setting PULSE_SERVER lets libpulse connect to
+# the socket directly, skipping the ownership-check path.
+[env]
+PULSE_SERVER = "unix:$XDG_RUNTIME_DIR/pulse/native"
+
 
 # ---- Agent / socket forwarding recipes ----
 #
@@ -58,10 +68,12 @@ host = "$XDG_RUNTIME_DIR/gnupg"
 container = "$XDG_RUNTIME_DIR/gnupg"
 optional = true
 
-# PulseAudio for notification sounds (paplay) and audio playback. Works
-# against both real PulseAudio and PipeWire's pulse-compat layer.
-# libpulse auto-discovers the socket via $XDG_RUNTIME_DIR (passed
-# through above) — no explicit PULSE_SERVER needed.
+# PulseAudio socket — for notification sounds (paplay) and audio
+# playback. Works against real PulseAudio AND PipeWire's pulse-compat
+# layer. Paired with the explicit PULSE_SERVER env var above so
+# libpulse connects directly to the socket without going through the
+# XDG-based auto-discovery (which checks ownership of XDG_RUNTIME_DIR
+# and fails without keep-id).
 [[mount]]
 host = "$XDG_RUNTIME_DIR/pulse/native"
 container = "$XDG_RUNTIME_DIR/pulse/native"

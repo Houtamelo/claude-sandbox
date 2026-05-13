@@ -76,18 +76,40 @@ pub fn kde_servicemenu_installed() -> bool {
     kde_servicemenu_installed_at().is_some()
 }
 
+/// Embedded template — the source-of-truth `.desktop` content with a
+/// `{{BINARY}}` placeholder that [`render_servicemenu`] substitutes
+/// with the absolute path to the running binary.
+const DESKTOP_ENTRY_TEMPLATE: &str =
+    include_str!("../assets/dolphin/open-in-claude-sandbox.desktop");
+
+/// Substitute `{{BINARY}}` in the embedded `.desktop` template with the
+/// given absolute path. Pure function so tests can pin the path; the
+/// install path resolves `std::env::current_exe()` and passes the
+/// result here.
+///
+/// We use an absolute path rather than a bare `claude-sandbox` token
+/// because KDE Plasma's systemd-user session doesn't put user-bin dirs
+/// (`~/.cargo/bin`, `~/.local/bin`, etc.) on PATH, and `bash -lc`
+/// doesn't reliably source the user's profile in the konsole-spawned-
+/// from-Plasma chain. Absolute path sidesteps the entire PATH question.
+pub fn render_servicemenu(binary_path: &std::path::Path) -> String {
+    DESKTOP_ENTRY_TEMPLATE.replace("{{BINARY}}", &binary_path.display().to_string())
+}
+
 /// Install the bundled .desktop entry into the KDE servicemenu dir.
-/// Embedded via `include_str!` so the runtime install doesn't depend
-/// on the source repo being present on disk. Mode 755 because KF6
-/// requires servicemenu entries to be executable.
+/// Resolves `std::env::current_exe()` and bakes it into the Exec line
+/// so future Dolphin clicks always launch this exact binary, not
+/// whatever `claude-sandbox` PATH-lookup might (or might not) resolve
+/// from the session env. Mode 755 because KF6 requires servicemenu
+/// entries to be executable.
 pub fn install_kde_servicemenu() -> std::io::Result<PathBuf> {
-    const DESKTOP_ENTRY: &str =
-        include_str!("../assets/dolphin/open-in-claude-sandbox.desktop");
+    let bin = std::env::current_exe()?;
+    let rendered = render_servicemenu(&bin);
     let dest = kde_servicemenu_user_path();
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&dest, DESKTOP_ENTRY)?;
+    std::fs::write(&dest, rendered)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

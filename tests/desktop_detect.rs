@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use claude_sandbox::desktop::{
     detect, kde_servicemenu_installed, kde_servicemenu_installed_at, kde_servicemenu_system_path,
-    kde_servicemenu_user_path, Desktop,
+    kde_servicemenu_user_path, render_servicemenu, Desktop,
 };
 
 static SERIAL: Mutex<()> = Mutex::new(());
@@ -170,6 +170,62 @@ fn system_path_defaults_to_usr_share_kio_servicemenus() {
             None => std::env::remove_var("CS_SYSTEM_KIO_SERVICEMENUS_DIR"),
         }
     }
+}
+
+#[test]
+fn render_substitutes_binary_path_into_exec_line() {
+    // KDE Plasma's systemd-user session doesn't put ~/.cargo/bin or
+    // similar on PATH, and `bash -lc` doesn't reliably source the
+    // user's profile in the konsole-spawned chain. So the .desktop's
+    // Exec line embeds an absolute binary path resolved at install
+    // time via std::env::current_exe.
+    let rendered = render_servicemenu(std::path::Path::new("/opt/claude-sandbox/bin/claude-sandbox"));
+    assert!(
+        rendered.contains("/opt/claude-sandbox/bin/claude-sandbox"),
+        "rendered .desktop must contain the literal binary path; got:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("{{BINARY}}"),
+        "{{{{BINARY}}}} placeholder must be substituted, none left in output:\n{rendered}"
+    );
+}
+
+#[test]
+fn render_preserves_login_shell_invocation() {
+    // Regression net for the earlier `bash -c` -> `bash -lc` fix. A
+    // future refactor shouldn't drop the login-shell flag.
+    let rendered = render_servicemenu(std::path::Path::new("/usr/bin/claude-sandbox"));
+    assert!(
+        rendered.contains("bash -lc"),
+        "Exec must use login shell so /etc/profile.d is sourced; got:\n{rendered}"
+    );
+}
+
+#[test]
+fn render_preserves_konsole_invocation() {
+    // Sanity: still a konsole launch. Catches a refactor that swaps
+    // konsole for something else without updating the asset.
+    let rendered = render_servicemenu(std::path::Path::new("/usr/bin/claude-sandbox"));
+    assert!(
+        rendered.contains("konsole --workdir %f"),
+        "Exec must launch konsole with %f workdir; got:\n{rendered}"
+    );
+}
+
+#[test]
+fn render_keeps_dual_exec_for_kde_action_machinery() {
+    // KF6 servicemenus need an `Exec=true` line in the main entry
+    // (KDE uses it as a no-op when the menu is constructed) AND a
+    // real Exec line inside the [Desktop Action ...] block. Dropping
+    // either silently breaks the menu.
+    let rendered = render_servicemenu(std::path::Path::new("/usr/bin/claude-sandbox"));
+    let exec_lines: Vec<&str> = rendered.lines().filter(|l| l.starts_with("Exec=")).collect();
+    assert_eq!(
+        exec_lines.len(),
+        2,
+        "expected two Exec= lines (top-level no-op + action's real); got: {exec_lines:?}"
+    );
+    assert_eq!(exec_lines[0], "Exec=true", "top-level Exec must remain the no-op");
 }
 
 #[test]

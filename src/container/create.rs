@@ -187,13 +187,16 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
     let current_toml_hash = toml_content_hash(opts.project_path);
     let current_machine_hash = opts.machine_hash.map(|s| s.to_string());
     let current_oauth_hash = opts.oauth_hash.map(|s| s.to_string());
+    let current_binary_hash = crate::machine::binary_content_hash();
     if podman.container_exists(opts.name)? {
-        // Recreate the container if ANY of the three hashes (project toml,
-        // machine.toml, oauth token) drifts from the container's baked-in
-        // labels. Each maps to a different kind of config we can't change
-        // on a running container: project toml = mounts/env/ports, machine
-        // = UID and other build args, oauth = injected env var. Named home
-        // volume (`cs-<name>-home`) is preserved across recreate because
+        // Recreate the container if ANY of the four hashes (project toml,
+        // machine.toml, oauth token, binary) drifts from the container's
+        // baked-in labels. Each maps to a different kind of state we can't
+        // change on a running container: project toml = mounts/env/ports,
+        // machine = UID and other build args, oauth = injected env var,
+        // binary = the podman-create args claude-sandbox emits (new flags,
+        // new mounts, etc. land on a binary upgrade). Named home volume
+        // (`cs-<name>-home`) is preserved across recreate because
         // `rm --volumes` only drops anonymous volumes.
         let existing_toml = container_label(podman, opts.name, "cs-toml-hash")
             .unwrap_or(None);
@@ -201,16 +204,26 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
             .unwrap_or(None);
         let existing_oauth = container_label(podman, opts.name, "cs-oauth-hash")
             .unwrap_or(None);
+        let existing_binary = container_label(podman, opts.name, "cs-binary-hash")
+            .unwrap_or(None);
         let toml_changed = existing_toml.as_deref() != current_toml_hash.as_deref();
         let machine_changed = existing_machine.as_deref() != current_machine_hash.as_deref();
         let oauth_changed = existing_oauth.as_deref() != current_oauth_hash.as_deref();
-        if !toml_changed && !machine_changed && !oauth_changed {
+        // Binary-hash check skipped when the container has no label at
+        // all (predates the gate): would force an unwanted recreate on
+        // every existing user's first start after upgrade. Once stamped,
+        // mismatches trigger as expected.
+        let binary_changed = existing_binary
+            .as_deref()
+            .is_some_and(|prev| prev != current_binary_hash);
+        if !toml_changed && !machine_changed && !oauth_changed && !binary_changed {
             return Ok(false);
         }
         let mut reasons: Vec<&str> = Vec::new();
         if toml_changed { reasons.push("project .claude-sandbox.toml"); }
         if machine_changed { reasons.push("machine.toml"); }
         if oauth_changed { reasons.push("oauth token"); }
+        if binary_changed { reasons.push("claude-sandbox binary"); }
         crate::step!(
             "{} changed — recreating container (named home volume survives)",
             reasons.join(" + ")
@@ -299,6 +312,7 @@ pub fn ensure_container(podman: &Podman, opts: &CreateOptions) -> Result<bool> {
         toml_hash: current_toml_hash.as_deref(),
         machine_hash: current_machine_hash.as_deref(),
         oauth_hash: current_oauth_hash.as_deref(),
+        binary_hash: Some(current_binary_hash.as_str()),
         selinux: crate::features::selinux::enabled(),
     };
     podman.run(&create_args(&spec))?;

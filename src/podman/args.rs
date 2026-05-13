@@ -27,6 +27,13 @@ pub struct CreateSpec<'a> {
     /// recreate (env vars are baked at create time) but NOT an image
     /// rebuild (the token doesn't appear in the Dockerfile).
     pub oauth_hash: Option<&'a str>,
+    /// Content hash of the running `claude-sandbox` binary. Stored as
+    /// `cs-binary-hash` so a fresh install (new podman-create args,
+    /// new env vars, new mounts) triggers container recreate even when
+    /// the user's config files haven't moved. Without this label, the
+    /// binary-only changes slip past every other recreate signal and
+    /// leave containers pinned to the prior binary's create-time args.
+    pub binary_hash: Option<&'a str>,
     /// True when the host kernel has SELinux loaded — emits
     /// `--security-opt label=disable` to opt the container out of
     /// SELinux confinement (without mutating host file labels). False
@@ -77,6 +84,10 @@ pub fn create_args(spec: &CreateSpec) -> Vec<String> {
     if let Some(h) = spec.oauth_hash {
         v.push("--label".into());
         v.push(format!("cs-oauth-hash={h}"));
+    }
+    if let Some(h) = spec.binary_hash {
+        v.push("--label".into());
+        v.push(format!("cs-binary-hash={h}"));
     }
     for vol in spec.volumes {
         v.push("--volume".into());

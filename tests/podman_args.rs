@@ -31,6 +31,7 @@ fn create_args_baseline() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: None,
+        binary_hash: None,
         selinux: true,
     };
 
@@ -74,6 +75,7 @@ fn create_args_with_ports_and_ro_mount() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: None,
+        binary_hash: None,
         selinux: true,
     };
     let args = create_args(&spec);
@@ -97,6 +99,7 @@ fn create_args_includes_toml_hash_label_when_set() {
         toml_hash: Some("deadbeefcafef00d"),
         machine_hash: None,
         oauth_hash: None,
+        binary_hash: None,
         selinux: true,
     };
     let args = create_args(&spec);
@@ -118,6 +121,7 @@ fn create_args_omits_toml_hash_label_when_none() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: None,
+        binary_hash: None,
         selinux: true,
     };
     let args = create_args(&spec);
@@ -142,10 +146,63 @@ fn create_args_includes_oauth_hash_label_when_set() {
         toml_hash: None,
         machine_hash: None,
         oauth_hash: Some("0123456789abcdef"),
+        binary_hash: None,
         selinux: true,
     };
     let args = create_args(&spec);
     assert!(args.contains(&"cs-oauth-hash=0123456789abcdef".into()));
+}
+
+#[test]
+fn create_args_includes_binary_hash_label_when_set() {
+    // Binary-only changes (new podman-create flags, e.g. the NVIDIA
+    // --group-add keep-groups fix) slip past every other recreate gate
+    // because the user's config files haven't moved. The cs-binary-hash
+    // label fingerprints the binary itself so the gate fires on
+    // cargo-install or any other binary swap.
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x",
+        image: "i:1",
+        volumes: &[],
+        env: &[],
+        network: "bridge",
+        ports: &[],
+        workdir: &workdir,
+        extra: &[],
+        toml_hash: None,
+        machine_hash: None,
+        oauth_hash: None,
+        binary_hash: Some("cafef00ddeadbeef"),
+        selinux: true,
+    };
+    let args = create_args(&spec);
+    assert!(
+        args.contains(&"cs-binary-hash=cafef00ddeadbeef".into()),
+        "expected cs-binary-hash label in args: {args:?}"
+    );
+}
+
+#[test]
+fn create_args_omits_binary_hash_label_when_none() {
+    let workdir = PathBuf::from("/work");
+    let spec = CreateSpec {
+        name: "x",
+        image: "i:1",
+        volumes: &[],
+        env: &[],
+        network: "bridge",
+        ports: &[],
+        workdir: &workdir,
+        extra: &[],
+        toml_hash: None,
+        machine_hash: None,
+        oauth_hash: None,
+        binary_hash: None,
+        selinux: true,
+    };
+    let args = create_args(&spec);
+    assert!(!args.iter().any(|a| a.starts_with("cs-binary-hash=")));
 }
 
 #[test]
@@ -156,6 +213,7 @@ fn create_args_emits_selinux_optout_when_enabled() {
         volumes: &[], env: &[], network: "bridge", ports: &[],
         workdir: &workdir, extra: &[],
         toml_hash: None, machine_hash: None, oauth_hash: None,
+        binary_hash: None,
         selinux: true,
     };
     let args = create_args(&spec);
@@ -174,6 +232,7 @@ fn create_args_omits_selinux_optout_when_disabled() {
         volumes: &[], env: &[], network: "bridge", ports: &[],
         workdir: &workdir, extra: &[],
         toml_hash: None, machine_hash: None, oauth_hash: None,
+        binary_hash: None,
         selinux: false,
     };
     let args = create_args(&spec);

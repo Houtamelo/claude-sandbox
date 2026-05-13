@@ -334,6 +334,34 @@ pub fn validate_oauth_token(token: &str) -> TokenValidation {
     parse_validation(output.status.success(), &http_code)
 }
 
+/// Hash the bytes at `path` with FNV-1a 64-bit, return as 16-char hex.
+/// Used by [`binary_content_hash`] to fingerprint the running binary
+/// for the `cs-binary-hash` container label.
+pub fn binary_content_hash_of(path: &std::path::Path) -> Result<String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| Error::Config(format!("hashing {}: {e}", path.display())))?;
+    Ok(fnv1a_64_hex(&bytes))
+}
+
+/// Content hash of the currently-executing binary, used as the
+/// `cs-binary-hash` container label so a fresh `cargo install` (or
+/// any binary swap) triggers container recreate even when machine.toml
+/// / project toml / oauth token haven't moved. Without this gate,
+/// binary-only changes (e.g. adding new podman-create flags in source)
+/// slip past every other recreate signal and leave running containers
+/// pinned to the previous binary's create-time args.
+///
+/// Falls back to a stable `"unknown"` sentinel when `current_exe`
+/// fails or the file isn't readable — the gate's job is to detect
+/// change, not to refuse to start when its input is missing.
+pub fn binary_content_hash() -> String {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return "unknown".into(),
+    };
+    binary_content_hash_of(&exe).unwrap_or_else(|_| "unknown".into())
+}
+
 /// Content hash of the oauth-token file. Used as a separate container
 /// label (`cs-oauth-hash`) so token rotation triggers a container
 /// recreate (env vars are baked at create time) WITHOUT triggering an

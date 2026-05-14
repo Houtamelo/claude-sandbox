@@ -1,16 +1,20 @@
 use std::path::Path;
 
-use dialoguer::Select;
+use dialoguer::{Confirm, Select};
 
 use crate::error::{Error, Result};
 use crate::worktree::claim::{evaluate, ClaimState};
-use crate::worktree::commands::list as list_worktrees;
+use crate::worktree::commands::{branch_exists, list as list_worktrees, BranchAction};
 use crate::worktree::WorktreeInfo;
 
 pub enum Choice {
     Main,
     Existing(String),
-    New(String, Option<String>),
+    /// Create a new worktree at `.worktrees/<name>`. The
+    /// [`BranchAction`] is resolved interactively in [`pick`] from
+    /// the user's branch input + a confirm prompt when the typed
+    /// branch doesn't exist locally.
+    New(String, BranchAction),
     Quit,
 }
 
@@ -37,12 +41,33 @@ pub fn pick(project: &Path) -> Result<Choice> {
             .interact_text()
             .map_err(|e| Error::Other(format!("input: {e}")))?;
         let branch: String = dialoguer::Input::new()
-            .with_prompt("Branch (empty = new branch from HEAD)")
+            .with_prompt(format!(
+                "Branch (empty = create new branch named '{name}')"
+            ))
             .allow_empty(true)
             .interact_text()
             .map_err(|e| Error::Other(format!("input: {e}")))?;
-        let branch = if branch.is_empty() { None } else { Some(branch) };
-        return Ok(Choice::New(name, branch));
+        let action = if branch.is_empty() {
+            BranchAction::CreateNamedAfterWorktree
+        } else if branch_exists(project, &branch) {
+            BranchAction::UseExisting(branch)
+        } else {
+            // Typed branch doesn't exist locally. Don't silently
+            // either-error-out or silently-create — ask explicitly.
+            let create = Confirm::new()
+                .with_prompt(format!(
+                    "Branch named '{branch}' does not exist, create new branch?"
+                ))
+                .default(true)
+                .interact()
+                .map_err(|e| Error::Other(format!("confirm: {e}")))?;
+            if create {
+                BranchAction::CreateNamed(branch)
+            } else {
+                return Ok(Choice::Quit);
+            }
+        };
+        return Ok(Choice::New(name, action));
     }
 
     let entry = &entries[idx];

@@ -63,21 +63,79 @@ fn classify(path: &Path, project: &Path) -> String {
     }
 }
 
-pub fn add(project: &Path, name: &str, branch: Option<&str>) -> Result<PathBuf> {
+/// What to do with the branch when creating a worktree. Three cases
+/// the picker resolves to:
+///
+/// - `CreateNamedAfterWorktree`: user left the branch input empty.
+///   Create a fresh branch named after the worktree label itself.
+///   `git worktree add -b <worktree-name> <dir>`.
+/// - `UseExisting(name)`: user typed a branch name that already exists
+///   in the repo. Check that ref out into the worktree dir.
+///   `git worktree add <dir> <name>`.
+/// - `CreateNamed(name)`: user typed a branch name that DOESN'T exist
+///   yet AND confirmed "create new". Create with that name.
+///   `git worktree add -b <name> <dir>`. Different from
+///   `CreateNamedAfterWorktree` because branch name and worktree dir
+///   can diverge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchAction {
+    CreateNamedAfterWorktree,
+    UseExisting(String),
+    CreateNamed(String),
+}
+
+/// Pure: build the args for `git <args>` (without the `git -C <project>`
+/// prefix, which the caller supplies). Extracted so unit tests can
+/// assert the argument shape without spawning git.
+pub fn build_worktree_add_args(
+    worktree_name: &str,
+    dir: &Path,
+    action: &BranchAction,
+) -> Vec<String> {
+    let dir_str = dir.display().to_string();
+    let mut args: Vec<String> = vec!["worktree".into(), "add".into()];
+    match action {
+        BranchAction::CreateNamedAfterWorktree => {
+            args.push("-b".into());
+            args.push(worktree_name.to_string());
+            args.push(dir_str);
+        }
+        BranchAction::UseExisting(b) => {
+            args.push(dir_str);
+            args.push(b.clone());
+        }
+        BranchAction::CreateNamed(b) => {
+            args.push("-b".into());
+            args.push(b.clone());
+            args.push(dir_str);
+        }
+    }
+    args
+}
+
+/// Returns true if `git -C <project> rev-parse --verify --quiet refs/heads/<branch>`
+/// succeeds. Used by the picker to decide whether to prompt "create
+/// new branch?" before delegating to [`add`].
+pub fn branch_exists(project: &Path, branch: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("refs/heads/{branch}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn add(project: &Path, name: &str, action: BranchAction) -> Result<PathBuf> {
     let dir = project.join(".worktrees").join(name);
     if dir.exists() {
         return Err(Error::Other(format!("worktree {} already exists", name)));
     }
     std::fs::create_dir_all(project.join(".worktrees"))?;
-    let mut args: Vec<String> = vec!["worktree".into(), "add".into()];
-    if let Some(b) = branch {
-        args.push(dir.display().to_string());
-        args.push(b.to_string());
-    } else {
-        args.push("-b".into());
-        args.push(name.to_string());
-        args.push(dir.display().to_string());
-    }
+    let args = build_worktree_add_args(name, &dir, &action);
     let status = Command::new("git")
         .arg("-C")
         .arg(project)

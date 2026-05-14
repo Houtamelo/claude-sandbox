@@ -120,7 +120,22 @@ pub enum CsCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum CsWorktreeCmd {
-    Add { name: String, #[arg(long)] branch: Option<String> },
+    /// Create (or attach to) a worktree under `.worktrees/<name>`.
+    ///
+    /// - No flag: create a fresh branch named after the worktree.
+    /// - `--branch X`: check out the existing branch X. Errors if
+    ///   X doesn't exist.
+    /// - `--new-branch X`: create a new branch named X (from HEAD).
+    ///   Errors if X already exists.
+    ///
+    /// `--branch` and `--new-branch` are mutually exclusive.
+    Add {
+        name: String,
+        #[arg(long, conflicts_with = "new_branch")]
+        branch: Option<String>,
+        #[arg(long = "new-branch", conflicts_with = "branch")]
+        new_branch: Option<String>,
+    },
     Ls,
     Rm { name: String },
     Current,

@@ -133,8 +133,8 @@ fn run_host() -> Result<()> {
                 claude_sandbox::picker::Choice::Existing(w) => {
                     targeted_start(&podman, &project, &derived_name, "claude", Some(&w), cli.force)
                 }
-                claude_sandbox::picker::Choice::New(w, b) => {
-                    create_worktree_and_start(&podman, &project, &derived_name, &w, b.as_deref())
+                claude_sandbox::picker::Choice::New(w, action) => {
+                    create_worktree_and_start(&podman, &project, &derived_name, &w, action)
                 }
             }
         }
@@ -1009,8 +1009,14 @@ fn run_cs() -> Result<()> {
                 }
                 Ok(())
             }
-            CsWorktreeCmd::Add { name, branch } => {
-                let dir = wt::add(&project, &name, branch.as_deref())?;
+            CsWorktreeCmd::Add { name, branch, new_branch } => {
+                let action = match (branch, new_branch) {
+                    (Some(_), Some(_)) => unreachable!("clap enforces mutual exclusion"),
+                    (Some(b), None) => claude_sandbox::worktree::commands::BranchAction::UseExisting(b),
+                    (None, Some(b)) => claude_sandbox::worktree::commands::BranchAction::CreateNamed(b),
+                    (None, None) => claude_sandbox::worktree::commands::BranchAction::CreateNamedAfterWorktree,
+                };
+                let dir = wt::add(&project, &name, action)?;
                 // Run worktree_setup hooks from /work/.claude-sandbox.toml.
                 let cfg_path = project.join(".claude-sandbox.toml");
                 if cfg_path.exists() {
@@ -1162,9 +1168,10 @@ fn create_worktree_and_start(
     project: &std::path::Path,
     derived_name: &str,
     worktree: &str,
-    branch: Option<&str>,
+    action: claude_sandbox::worktree::commands::BranchAction,
 ) -> Result<()> {
     use claude_sandbox::container::exec::exec_into;
+    use claude_sandbox::worktree::commands::BranchAction;
     let prep = prepare_container(podman, project, derived_name)?;
     let flags = resolve_claude_flags(&prep.project_cfg, &prep.machine_cfg).join(" ");
     let mut args: Vec<String> = vec![
@@ -1175,9 +1182,19 @@ fn create_worktree_and_start(
         "add".into(),
         worktree.into(),
     ];
-    if let Some(b) = branch {
-        args.push("--branch".into());
-        args.push(b.into());
+    // Translate the host-side BranchAction back into the cs CLI flags
+    // that CsWorktreeCmd::Add expects. CreateNamedAfterWorktree
+    // passes no flag (cs defaults to -b <worktree-name>).
+    match action {
+        BranchAction::CreateNamedAfterWorktree => {}
+        BranchAction::UseExisting(b) => {
+            args.push("--branch".into());
+            args.push(b);
+        }
+        BranchAction::CreateNamed(b) => {
+            args.push("--new-branch".into());
+            args.push(b);
+        }
     }
     podman.run_inherit(&args)?;
     let _ = project;

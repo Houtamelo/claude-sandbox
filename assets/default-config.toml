@@ -103,6 +103,20 @@ optional = true
 #     `/run/netconfig/resolv.conf` is the LAN-DNS file that tailscaled
 #     leaves alone, so bind-mounting it sidesteps the Tailscale overlay.
 #
+#     Tailscale exit-node caveat: if you ALSO have an exit node
+#     configured (`tailscale up --exit-node=...`), `NetfilterMode: 2`
+#     routes ALL outbound traffic through Tailscale by default,
+#     including DNS queries to your LAN router. The bind-mount gives
+#     the container the right resolver address, but the queries can't
+#     reach it because Tailscale's firewall blocks LAN-IP destinations.
+#     Symptom: host AND container both fail `dig @192.168.1.1 ...`
+#     when Tailscale is up. Fix:
+#         tailscale set --exit-node-allow-lan-access=true
+#     This is Tailscale's standard "use exit node, still reach local
+#     resources" config and is required for the bind-mount recipe to
+#     work alongside an exit node. Verify via `tailscale debug prefs`
+#     → "ExitNodeAllowLANAccess": true.
+#
 #   - systemd-resolved (Ubuntu / Fedora / Arch with default config):
 #     /run/systemd/resolve/resolv.conf  (the real upstream — NOT
 #     `stub-resolv.conf` which has `127.0.0.53` that doesn't work

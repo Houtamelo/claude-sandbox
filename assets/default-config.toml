@@ -80,6 +80,44 @@ container = "$XDG_RUNTIME_DIR/pulse/native"
 optional = true
 
 
+# ---- Live host-DNS tracking (uncomment + pick the right host path) ----
+#
+# Podman snapshots host's `/etc/resolv.conf` into the container at
+# `podman start` time. After that the container's view is frozen until
+# the next stop+start. That breaks when host DNS flips mid-session
+# (Tailscale up/down with "Use Tailscale DNS" enabled; WiFi switch;
+# VPN toggle) — container keeps pointing at a resolver it can't reach,
+# you see "Could not resolve host: api.anthropic.com" / "ConnectionRefused".
+#
+# Bind-mounting host's resolv.conf source file into the container makes
+# the container's DNS view follow host state live. Read-only — container
+# has no business writing to host DNS state.
+#
+# Pick the entry that matches your distro and uncomment it:
+#
+#   - openSUSE Tumbleweed (netconfig): /run/netconfig/resolv.conf
+#     This is what `/etc/resolv.conf` symlinks to on stock Tumbleweed.
+#     CRITICAL on Tumbleweed if you also use Tailscale: tailscaled
+#     REPLACES `/etc/resolv.conf` with a regular file pointing at
+#     `100.100.100.100` (which the container can't reach via NAT).
+#     `/run/netconfig/resolv.conf` is the LAN-DNS file that tailscaled
+#     leaves alone, so bind-mounting it sidesteps the Tailscale overlay.
+#
+#   - systemd-resolved (Ubuntu / Fedora / Arch with default config):
+#     /run/systemd/resolve/resolv.conf  (the real upstream — NOT
+#     `stub-resolv.conf` which has `127.0.0.53` that doesn't work
+#     from inside a container).
+#
+#   - Plain (Debian without systemd-resolved, Alpine, etc.):
+#     /etc/resolv.conf  (no overlay shenanigans — just the real file).
+#
+# [[mount]]
+# host = "/run/netconfig/resolv.conf"
+# container = "/etc/resolv.conf"
+# ro = true
+# optional = true
+
+
 # ---- Examples (commented out) ----
 #
 # Globally available tools, applied on every container creation:
